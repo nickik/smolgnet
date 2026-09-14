@@ -64,6 +64,11 @@ path = "tests/qdx.rs"
 required-features = ["alloc"]
 
 [[test]]
+name = "host_tap"
+path = "tests/host_tap.rs"
+required-features = ["host-tap"]
+
+[[test]]
 name = "performance"
 path = "tests/performance.rs"
 required-features = ["alloc"]
