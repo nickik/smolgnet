@@ -51,8 +51,6 @@ impl Crc8 {
         Self { value: 0 }
     }
 
-    /// Bitwise update is retained for the packed GDP header fields whose CRC
-    /// input is not naturally byte aligned.
     pub fn update_bit(&mut self, bit: bool) {
         let top = (self.value & 0x80) != 0;
         self.value <<= 1;
@@ -67,8 +65,6 @@ impl Crc8 {
         }
     }
 
-    /// Fast incremental byte update. The state is identical to calling
-    /// `update_bit` eight times for every byte.
     pub fn update_bytes(&mut self, bytes: &[u8]) {
         for &b in bytes {
             self.value = CRC8_TABLE[(self.value ^ b) as usize];
@@ -114,7 +110,7 @@ impl Crc32 {
 
     /// Table-driven CRC-32-GNET update for one or many discontiguous spans.
     /// Callers can repeatedly invoke this for pseudo-header, metadata and
-    /// payload without ever concatenating them into a temporary buffer.
+    /// payload without concatenating them into a temporary buffer.
     pub fn update_bytes(&mut self, bytes: &[u8]) {
         for &b in bytes {
             let idx = ((self.value >> 24) as u8 ^ b) as usize;
@@ -131,6 +127,7 @@ impl Default for Crc32 {
     fn default() -> Self {
         Self::new()
     }
+}
 
 pub fn crc8_gnet(bytes: &[u8]) -> u8 {
     let mut c = Crc8::new();
