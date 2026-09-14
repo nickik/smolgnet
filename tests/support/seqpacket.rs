@@ -25,7 +25,7 @@ impl SeqPacketNic {
         let rc = unsafe {
             libc::socketpair(
                 libc::AF_UNIX,
-                libc::SOCK_SEQPACKET,
+                libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
                 0,
                 fds.as_mut_ptr(),
             )
@@ -34,8 +34,6 @@ impl SeqPacketNic {
             return Err(std::io::Error::last_os_error());
         }
 
-        // Deliberately do not set FD_CLOEXEC. The separate-process integration
-        // test passes one endpoint through Command::spawn() by inherited fd.
         let a = unsafe { OwnedFd::from_raw_fd(fds[0]) };
         let b = unsafe { OwnedFd::from_raw_fd(fds[1]) };
         Ok((Self::new(a), Self::new(b)))
@@ -58,6 +56,25 @@ impl SeqPacketNic {
 
     pub fn raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+
+    /// Control whether this descriptor survives the next exec(). Tests clear
+    /// CLOEXEC only on the endpoint intentionally handed to the child process.
+    pub fn set_inheritable(&self, inheritable: bool) -> std::io::Result<()> {
+        let fd = self.fd.as_raw_fd();
+        let current = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if current < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let new_flags = if inheritable {
+            current & !libc::FD_CLOEXEC
+        } else {
+            current | libc::FD_CLOEXEC
+        };
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, new_flags) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     fn send_record(&self, bytes: &[u8]) -> Result<()> {
