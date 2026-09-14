@@ -64,6 +64,11 @@ path = "tests/behavior.rs"
 required-features = ["alloc"]
 
 [[test]]
+name = "gts_profile_matrix"
+path = "tests/gts_profile_matrix.rs"
+required-features = ["alloc"]
+
+[[test]]
 name = "faults"
 path = "tests/faults.rs"
 required-features = ["alloc"]
