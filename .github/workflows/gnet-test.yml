@@ -2,7 +2,7 @@ name: GNet point-to-point
 
 on:
   push:
-    branches: [main, gnet-point-to-point]
+    branches: [main, gnet-point-to-point, heapless-storage-socketset-v2]
   pull_request:
   workflow_dispatch:
 
@@ -14,7 +14,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test GNet stack
         run: cargo test --all-targets
-      - name: Check no-std + alloc build
+      - name: Test heapless no-alloc API
+        run: cargo test --no-default-features --test heapless_api
+      - name: Check no-std without alloc
         run: cargo check --no-default-features
       - name: Compare 1 MiB smolgnet and smoltcp loopback
         run: cargo test --release --test performance -- --ignored --nocapture
