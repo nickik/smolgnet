@@ -1,7 +1,8 @@
-mod support;
+#[path = "support/qdx.rs"]
+mod qdx_support;
 
+use qdx_support::{QdxDirectLink, VirtualNic, VirtualNicLink};
 use smolgnet::*;
-use support::qdx::{QdxDirectLink, VirtualNic, VirtualNicLink};
 
 fn packet() -> GdpPacket {
     let h = GdpHeader::global(
