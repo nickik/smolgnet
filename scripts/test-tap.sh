@@ -26,11 +26,16 @@ trap cleanup EXIT
 cleanup
 
 sudo ip link add name "$BRIDGE" type bridge
+sudo ip link set dev "$BRIDGE" type bridge stp_state 0 forward_delay 0
 sudo ip tuntap add dev "$TAP_A" mode tap user "$OWNER"
 sudo ip tuntap add dev "$TAP_B" mode tap user "$OWNER"
 
-sudo ip link set dev "$TAP_A" address 02:00:00:00:00:01
-sudo ip link set dev "$TAP_B" address 02:00:00:00:00:02
+# These are the Linux host-side TAP interface MACs. They MUST differ from the
+# logical endpoint MACs used by tests/host_tap.rs (02:00:...:01 / :02).
+# Otherwise the Linux bridge treats the logical destination as local to the
+# host instead of forwarding it out the peer TAP file descriptor.
+sudo ip link set dev "$TAP_A" address 02:ff:00:00:00:01
+sudo ip link set dev "$TAP_B" address 02:ff:00:00:00:02
 sudo ip link set dev "$TAP_A" master "$BRIDGE"
 sudo ip link set dev "$TAP_B" master "$BRIDGE"
 sudo ip link set dev "$BRIDGE" up
