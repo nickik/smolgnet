@@ -2,9 +2,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use smolgnet::{
-    DirectLink, Endpoint, Error, GnetFrame, GnetFrameDevice, LinkTraffic, Result,
-};
+#[path = "direct.rs"]
+mod direct_support;
+
+use direct_support::DirectLink;
+use smolgnet::{Endpoint, Error, GnetFrame, GnetFrameDevice, LinkTraffic, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VirtualNicSide {

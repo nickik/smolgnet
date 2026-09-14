@@ -12,13 +12,11 @@ pub mod time;
 pub mod wire;
 
 #[cfg(feature = "alloc")]
-pub mod burst;
+pub mod dlp;
 #[cfg(feature = "alloc")]
 pub mod endpoint;
 #[cfg(feature = "alloc")]
 pub mod gts;
-#[cfg(feature = "alloc")]
-pub mod link;
 #[cfg(feature = "p4-gdp")]
 pub mod p4_gdp;
 #[cfg(feature = "p4-gts")]
@@ -29,6 +27,15 @@ pub mod qdx;
 pub mod runtime;
 #[cfg(feature = "alloc")]
 pub mod trace;
+
+// Transitional crate-private compatibility name for the endpoint core while
+// the DLP implementation lives in the explicit `dlp` module. This is not part
+// of the public API and can disappear once the endpoint core is mechanically
+// updated to import `crate::dlp` directly.
+#[cfg(feature = "alloc")]
+mod link {
+    pub(crate) use crate::dlp::*;
+}
 
 pub use bounded_gts::{
     AckState as BoundedAckState, BoundedGtsSocket, BoundedStreamSlot, ReceivedMessage,
@@ -49,16 +56,14 @@ pub use wire::gdp::{AddressForm, GdpAddress, GdpHeader, GdpType, GdpWireConfig, 
 pub use wire::gts::{Direction, GtsType, StreamProfile};
 
 #[cfg(feature = "alloc")]
-pub use burst::{BurstDirectLink, DEFAULT_DLP_BURST_FLITS};
+pub use dlp::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
 #[cfg(feature = "alloc")]
 pub use endpoint::{
-    make_link_local, AddressAuthorityConfig, AddressState, DirectLink, Endpoint, EndpointConfig,
+    make_link_local, AddressAuthorityConfig, AddressState, Endpoint, EndpointConfig,
     ListenerConfig, TunnelHandle, BOOTSTRAP_ADDRESS, LINK_LOCAL_PREFIX,
 };
 #[cfg(feature = "alloc")]
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
-#[cfg(feature = "alloc")]
-pub use link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
 #[cfg(feature = "alloc")]
 pub use qdx::{GnetFlitDevice, GnetFrameDevice};
 #[cfg(feature = "alloc")]
