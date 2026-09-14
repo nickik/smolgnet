@@ -6,18 +6,18 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 
 ## Implemented
 
-- native DLP flits with a configurable 2-VC or 4-VC profile
+- native DLP flits with configurable 2-VC or 4-VC profiles
 - VC selection hidden below GDP/GCTL/GTS
 - caller-configured bounded receive buffer in physical flits
 - receiver-driven one-credit-per-flit DLP admission
 - automatic GCTL `CREDIT` and `CREDIT_REQUEST`
 - continuous receive-capacity re-advertisement as DLP packets leave the receive buffer
-- a reserved DLP control lane so credit-control traffic cannot deadlock behind the credit it is establishing
+- reserved DLP control lane so credit-control traffic cannot deadlock behind the credit it is establishing
 - GDP Global and Local address forms
 - frozen GDP Size Classes and CRC-8-GNET
 - FE80/16 link-local endpoint bootstrap addresses
-- GCTL Router `SOLICIT` / `ADVERTISE`
-- GCTL `ADDRESS_OFFER` / `ADDRESS_CLAIM` / `ADDRESS_ACK` / `ADDRESS_NAK`
+- frozen GCTL Router `SOLICIT` / `ADVERTISE`
+- frozen GCTL `ADDRESS_OFFER` / `ADDRESS_CLAIM` / `ADDRESS_ACK` / `ADDRESS_NAK`
 - point-to-point address-authority implementation for bootstrap testing
 - GCTL ECHO and generic GCTL inbox handling
 - canonical CSS Registered-8, Short-32, and Full-128 forms
@@ -33,7 +33,9 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 - DATA_END, stream close/reset, tunnel close/reset
 - reset cleanup of queued receive/transmit stream state
 - `no_std` + `alloc` build
-- deterministic in-memory direct-link harness for endpoint tests
+- deterministic in-memory direct-link harness
+- deterministic packet-loss/corruption test harness
+- 1 MiB end-to-end transfer/performance tests
 
 ## Endpoint construction
 
@@ -127,8 +129,6 @@ The test authority performs only GCTL discovery/address assignment. It is not a 
 
 ## Link credit and GTS credit are different
 
-`smolgnet` deliberately keeps the two credit systems separate:
-
 ```text
 GCTL / DLP link credit
     scope: adjacent physical forwarding endpoint
@@ -141,15 +141,30 @@ GTS receive credit
 
 Neither credit system is inferred from the other.
 
-## Provisional GCTL body profile
+## Frozen GCTL credit/bootstrap profile
 
-The GNet specification freezes the GCTL message registry and logical discovery/address semantics, but exact compact payload packing for `CREDIT_REQUEST`, `CREDIT`, `SOLICIT`, `ADVERTISE`, and address configuration remains draft.
+The exact GNet 0.1 body layouts for:
 
-To make the point-to-point stack executable, smolgnet currently defines a **provisional implementation profile** for these message bodies in `wire::gctl`. The common 8-byte GCMP header and registered message type values remain those of GNet. The provisional body layouts are isolated from endpoint/DLP state so they can be replaced when the canonical specification freezes them.
+```text
+CREDIT_REQUEST
+CREDIT
+SOLICIT
+ADVERTISE
+ADDRESS_OFFER
+ADDRESS_CLAIM
+ADDRESS_ACK
+ADDRESS_NAK
+```
 
-This implementation profile must not be cited as a frozen GNet wire-format decision.
+are frozen by `nickik/GNet` ADR-0019, **GCTL Credit and Bootstrap Wire Profile**.
 
-The pre-assignment point-to-point discovery destination `FE80:0000:0000:0000` is likewise a smolgnet bootstrap convention until the canonical bootstrap destination encoding is frozen. Normal client link-local addresses always use a nonzero 48-bit suffix.
+The reserved link-scoped bootstrap destination is:
+
+```text
+FE80:0000:0000:0000
+```
+
+smolgnet implements these formats directly in `wire::gctl`. See `docs/GCTL_PROFILE.md` for the implementation mapping.
 
 ## Tests
 
@@ -158,13 +173,58 @@ cargo test --all-targets
 cargo check --no-default-features
 ```
 
-The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, and graceful close.
+The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, loss/corruption recovery, and a deterministic 1 MiB end-to-end transfer.
 
-`docs/TEST_CONCEPTS.md` documents the broader test strategy. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
+### 1 MiB in-memory throughput
 
-## Specification status caveats
+The normal `performance` integration test moves a deterministic 1 MiB random buffer through two complete smolgnet endpoint stacks using reliable GTS and verifies every byte.
 
-The implementation follows the current `nickik/GNet` specifications. GDP Address Form bit polarity is configurable because the bit position and meaning are frozen but numeric polarity is not yet frozen. GTS timer values are implementation constants until normative timing values are frozen. The provisional GCTL/bootstrap encodings described above are implementation scaffolding rather than normative protocol changes.
+For useful timing output:
+
+```bash
+cargo test --release --test performance -- --nocapture
+```
+
+### smolgnet vs smoltcp
+
+`examples/perf_compare.rs` mirrors the structure of smoltcp's own loopback TCP benchmark and runs both implementations against the same deterministic byte buffer.
+
+```bash
+cargo run --release --example perf_compare
+```
+
+Default payload is 1 MiB. Override it with:
+
+```bash
+SMOLGNET_BENCH_BYTES=67108864 cargo run --release --example perf_compare
+```
+
+The comparison is intended as an implementation-throughput check, not a claim that GTS and TCP provide identical semantics.
+
+### Linux TAP/bridge benchmark
+
+An ignored test crosses the real Linux TAP/bridge path. It batches GNet flits into test Ethernet frames so kernel I/O overhead is measurable without one syscall per flit.
+
+```bash
+./tools/setup_tap_pair.sh
+SMOLGNET_TAP_A=gnettap0 SMOLGNET_TAP_B=gnettap1 \
+  cargo test --release --test tap_performance -- --ignored --nocapture
+./tools/setup_tap_pair.sh gnettap0 gnettap1 gnetbr0 clean
+```
+
+This TAP encapsulation exists only for host benchmarking; it is not a GNet wire-format definition.
+
+## Fault-injection scope
+
+The deterministic fault test drops complete GDP/GTS packets or corrupts the GTS CRC while preserving DLP packet boundaries. This validates GTS recovery, duplicate handling, ACK loss, and unreliable-datagram discard behavior.
+
+It intentionally does **not** drop arbitrary GDP header flits. Losing/corrupting a Size-Class-bearing header flit exercises the separate unresolved DLP resynchronization problem and must not be hidden by the GTS test harness.
+
+`docs/TEST_CONCEPTS.md` documents the broader test strategy. `AI_CONTEXT.md` records architectural rules for future AI-assisted development.
+
+## Remaining specification caveats
+
+GDP Address Form bit polarity is configurable because the bit position and meaning are frozen but numeric polarity is not yet frozen. GTS timer values are implementation constants until normative timing values are frozen. DLP resynchronization after an untrustworthy GDP header/Size Class remains open.
 
 ## License
 

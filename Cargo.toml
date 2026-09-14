@@ -17,6 +17,10 @@ std = []
 
 [dependencies]
 
+[dev-dependencies]
+libc = "0.2"
+smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "phy-tuntap_interface", "proto-ipv4", "socket-tcp"] }
+
 [[test]]
 name = "wire"
 path = "tests/wire.rs"
@@ -36,3 +40,21 @@ path = "tests/endpoint.rs"
 [[test]]
 name = "behavior"
 path = "tests/behavior.rs"
+
+[[test]]
+name = "fault"
+path = "tests/fault.rs"
+
+[[test]]
+name = "performance"
+path = "tests/performance.rs"
+
+[[test]]
+name = "tap_performance"
+path = "tests/tap_performance.rs"
+required-features = ["std"]
+
+[[example]]
+name = "perf_compare"
+path = "examples/perf_compare.rs"
+required-features = ["std"]
