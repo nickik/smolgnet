@@ -1,4 +1,7 @@
+mod support;
+
 use smolgnet::*;
+use support::qdx::{QdxDirectLink, VirtualNic, VirtualNicLink};
 
 fn packet() -> GdpPacket {
     let h = GdpHeader::global(
@@ -42,9 +45,6 @@ fn qdx_frame_crc_failure_keeps_known_frame_boundary() {
     b.note_data_credit_granted((flits * 2) as u32).unwrap();
 
     let mut bad = good.clone();
-    // Corrupt the global GDP header while leaving the explicit QDX frame
-    // boundary intact. GDP CRC must reject it, but the next frame remains
-    // independently decodable.
     bad[4] ^= 0x01;
     let bad_frame = GnetFrame {
         vcid: Vcid::VC1,
