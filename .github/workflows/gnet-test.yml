@@ -2,7 +2,7 @@ name: GNet point-to-point
 
 on:
   push:
-    branches: [main, gnet-point-to-point, heapless-storage-socketset-v2]
+    branches: [main, gnet-point-to-point, heapless-storage-socketset-v2, p4-gdp-main-integration]
   pull_request:
   workflow_dispatch:
 
@@ -12,8 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test GNet stack
+      - name: Test GNet stack with handwritten GDP
         run: cargo test --all-targets
+      - name: Test GNet stack with x4c P4 GDP
+        run: cargo test --all-targets --features p4-gdp
+      - name: Differential-test P4 GDP against handwritten GDP
+        run: cargo test --all-targets --features p4-gdp-compare
+      - name: Run standalone P4 GDP conformance suite
+        run: cargo test --manifest-path p4-gdp/Cargo.toml --all-targets
       - name: Test async/waker support
         run: cargo test --all-targets --features async
       - name: Test hosted TAP adapter

@@ -80,7 +80,39 @@ impl GdpHeader{
     }
     #[cfg(feature="alloc")]
     pub fn encode(&self,cfg:GdpWireConfig)->Result<Vec<u8>>{let mut out=alloc::vec![0u8;self.header_len()];self.encode_into(cfg,&mut out)?;Ok(out)}
+
+    /// Decode GDP using the selected backend. Handwritten Rust remains the
+    /// default. `p4-gdp` selects the x4c-generated parser for the standard
+    /// local-form-bit convention. `p4-gdp-compare` executes both decoders and
+    /// rejects any difference in result or error classification.
     pub fn decode(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
+        #[cfg(feature="p4-gdp")]
+        if cfg.local_form_bit {
+            #[cfg(feature="p4-gdp-compare")]
+            {
+                let p4=crate::p4_gdp::decode_header(buf,local_prefix);
+                let handwritten=Self::decode_handwritten(buf,cfg,local_prefix);
+                return match (p4,handwritten) {
+                    (Ok(a),Ok(b)) if a==b=>Ok(a),
+                    (Err(a),Err(b)) if a==b=>Err(a),
+                    _=>Err(Error::InvalidField),
+                };
+            }
+            #[cfg(not(feature="p4-gdp-compare"))]
+            {
+                return crate::p4_gdp::decode_header(buf,local_prefix);
+            }
+        }
+        Self::decode_handwritten(buf,cfg,local_prefix)
+    }
+
+    #[cfg(feature="p4-gdp")]
+    #[doc(hidden)]
+    pub fn decode_handwritten_reference(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
+        Self::decode_handwritten(buf,cfg,local_prefix)
+    }
+
+    fn decode_handwritten(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
         if buf.len()<4{return Err(Error::InvalidLength)}let w=u32::from_be_bytes(buf[0..4].try_into().unwrap());let version=((w>>30)&3)as u8;let packet_type=GdpType::from_wire(((w>>26)&0xf)as u8);let size_class=SizeClass::from_wire(((w>>22)&0xf)as u8)?;let form=cfg.form_from_bit(((w>>21)&1)!=0);let received_crc=((w>>8)&0xff)as u8;
         let header=match form{AddressForm::Global=>{if buf.len()<20{return Err(Error::InvalidLength)}let hop=(w&0xff)as u8;let destination=GdpAddress(u64::from_be_bytes(buf[4..12].try_into().unwrap()));let source=GdpAddress(u64::from_be_bytes(buf[12..20].try_into().unwrap()));Self{version,packet_type,size_class,hop_limit:hop,addresses:GdpAddresses::Global{destination,source}}}AddressForm::Local=>{if buf.len()<8{return Err(Error::InvalidLength)}let hop=(w&0xf)as u8;let ids=u32::from_be_bytes(buf[4..8].try_into().unwrap());Self{version,packet_type,size_class,hop_limit:hop,addresses:GdpAddresses::Local{destination:(ids>>16)as u16,source:ids as u16,prefix:local_prefix&!0xffff}}}};
         if header.crc8(cfg)!=received_crc{return Err(Error::InvalidCrc)}Ok(header)

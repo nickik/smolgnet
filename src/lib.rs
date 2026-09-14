@@ -18,6 +18,8 @@ pub mod endpoint;
 pub mod gts;
 #[cfg(feature = "alloc")]
 pub mod link;
+#[cfg(feature = "p4-gdp")]
+pub mod p4_gdp;
 #[cfg(feature = "alloc")]
 pub mod qdx;
 #[cfg(feature = "alloc")]

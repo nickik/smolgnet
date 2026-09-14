@@ -2,14 +2,20 @@ name: P4 GDP x4c
 
 on:
   push:
-    branches: [main]
+    branches: [main, p4-gdp-main-integration]
     paths:
       - 'p4-gdp/**'
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'src/p4_gdp.rs'
       - 'src/wire/gdp.rs'
       - '.github/workflows/p4-gdp.yml'
   pull_request:
     paths:
       - 'p4-gdp/**'
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'src/p4_gdp.rs'
       - 'src/wire/gdp.rs'
       - '.github/workflows/p4-gdp.yml'
   workflow_dispatch:
