@@ -16,8 +16,9 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 - GDP Global and Local address forms
 - frozen GDP Size Classes and CRC-8-GNET
 - FE80/16 link-local endpoint bootstrap addresses
-- GCTL Router `SOLICIT` / `ADVERTISE`
-- GCTL `ADDRESS_OFFER` / `ADDRESS_CLAIM` / `ADDRESS_ACK` / `ADDRESS_NAK`
+- frozen GCTL Router `SOLICIT` / `ADVERTISE`
+- frozen GCTL `ADDRESS_OFFER` / `ADDRESS_CLAIM` / `ADDRESS_ACK` / `ADDRESS_NAK`
+- frozen bootstrap destination `FE80:0000:0000:0000`
 - point-to-point address-authority implementation for bootstrap testing
 - GCTL ECHO and generic GCTL inbox handling
 - canonical CSS Registered-8, Short-32, and Full-128 forms
@@ -32,6 +33,8 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 - strict validation of incoming stream reliability, negotiated Size Class, length, direction, and state
 - DATA_END, stream close/reset, tunnel close/reset
 - reset cleanup of queued receive/transmit stream state
+- deterministic loss/corruption fault tests
+- 1 MiB release-mode throughput comparison against stock smoltcp 0.14 TCP loopback
 - `no_std` + `alloc` build
 - deterministic in-memory direct-link harness for endpoint tests
 
@@ -141,30 +144,71 @@ GTS receive credit
 
 Neither credit system is inferred from the other.
 
-## Provisional GCTL body profile
+## Frozen GCTL credit/bootstrap profile
 
-The GNet specification freezes the GCTL message registry and logical discovery/address semantics, but exact compact payload packing for `CREDIT_REQUEST`, `CREDIT`, `SOLICIT`, `ADVERTISE`, and address configuration remains draft.
+The wire layouts for:
 
-To make the point-to-point stack executable, smolgnet currently defines a **provisional implementation profile** for these message bodies in `wire::gctl`. The common 8-byte GCMP header and registered message type values remain those of GNet. The provisional body layouts are isolated from endpoint/DLP state so they can be replaced when the canonical specification freezes them.
+```text
+CREDIT_REQUEST
+CREDIT
+SOLICIT
+ADVERTISE
+ADDRESS_OFFER
+ADDRESS_CLAIM
+ADDRESS_ACK
+ADDRESS_NAK
+```
 
-This implementation profile must not be cited as a frozen GNet wire-format decision.
+are frozen by GNet ADR-0019 and implemented by `wire::gctl`. The bootstrap GDP destination `FE80:0000:0000:0000`, real-buffer-derived link-credit semantics, and bounded control-progress requirement are also frozen GNet 0.1 behavior.
 
-The pre-assignment point-to-point discovery destination `FE80:0000:0000:0000` is likewise a smolgnet bootstrap convention until the canonical bootstrap destination encoding is frozen. Normal client link-local addresses always use a nonzero 48-bit suffix.
+`docs/GCTL_WIRE_PROFILE.md` summarizes the profile. The normative source remains the `nickik/GNet` specification repository.
+
+The current use of VC0 as a small reserved control lane is a smolgnet point-to-point implementation choice satisfying the bounded-control-progress requirement; it is not part of the GCTL body encoding itself.
+
+## Fault tests
+
+`tests/faults.rs` provides deterministic seeded fault injection for GTS DATA/DATA_END/DATAGRAM traffic.
+
+The reliable test corrupts or makes packets transport-visible as lost after DLP accounting, verifies GTS CRC rejection, advances the retransmission timer, and confirms the exact original byte sequence is eventually delivered once and in order.
+
+The unreliable test applies the same kind of faults to a sequenced DATAGRAM stream and verifies corrupt/lost messages are not delivered and are not retransmitted.
+
+Literal loss of native DLP flits is intentionally a separate problem: losing physical flits also loses the receiver-credit consumption event and interacts with DLP resynchronization/recovery. The GTS fault test therefore isolates transport reliability from that lower-layer recovery problem.
+
+## Performance comparison
+
+`tests/performance.rs` transfers the same deterministic 1 MiB payload through:
+
+1. smolgnet reliable GTS over GDP/DLP and the in-memory `DirectLink`;
+2. stock smoltcp 0.14 TCP over its in-memory Ethernet `Loopback` device.
+
+This is intended as a library CPU-cost comparison rather than a physical-network benchmark. It excludes connection establishment from the timed section and verifies the complete payload at the receiver.
+
+Run it with:
+
+```bash
+cargo test --release --test performance -- --ignored --nocapture
+```
+
+CI also runs this comparison and prints the observed MiB/s, Gbit/s, elapsed time, and smolgnet/smoltcp ratio. Performance is not a pass/fail gate because shared-runner timing varies.
+
+The original upstream smoltcp project also has both an in-memory loopback benchmark and a separate OS TUN/TAP benchmark. A future smolgnet host adapter can add the latter style once a native host-device interface exists; the in-memory comparison is the cleaner first comparison of stack implementation cost.
 
 ## Tests
 
 ```bash
 cargo test --all-targets
 cargo check --no-default-features
+cargo test --release --test performance -- --ignored --nocapture
 ```
 
-The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, and graceful close.
+The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, deterministic loss/corruption, and comparative throughput.
 
 `docs/TEST_CONCEPTS.md` documents the broader test strategy. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
 
 ## Specification status caveats
 
-The implementation follows the current `nickik/GNet` specifications. GDP Address Form bit polarity is configurable because the bit position and meaning are frozen but numeric polarity is not yet frozen. GTS timer values are implementation constants until normative timing values are frozen. The provisional GCTL/bootstrap encodings described above are implementation scaffolding rather than normative protocol changes.
+The implementation follows the current `nickik/GNet` specifications. GDP Address Form bit polarity remains configurable where the canonical specification intentionally permits it. GTS timer values are implementation constants until normative timing values are frozen. Native DLP recovery after corrupted/lost framing information remains a separate unresolved lower-layer area and is not silently invented by the GTS fault harness.
 
 ## License
 
