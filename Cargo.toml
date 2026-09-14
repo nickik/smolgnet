@@ -15,8 +15,11 @@ autobenches = false
 default = ["std", "alloc"]
 std = ["alloc"]
 alloc = []
+async = []
+host-tap = ["std", "dep:libc"]
 
 [dependencies]
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
