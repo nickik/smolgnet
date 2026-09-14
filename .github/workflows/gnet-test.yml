@@ -18,5 +18,12 @@ jobs:
         run: cargo test --all-targets --features p4-gdp-compare
       - name: Check no-std + alloc build
         run: cargo check --no-default-features
+      - name: Benchmark handwritten vs x4c GDP decode
+        run: cargo test --release --features p4-gdp-compare --test p4_performance -- --ignored --nocapture
+      - name: Benchmark handwritten vs x4c GDP decode with LTO
+        env:
+          CARGO_PROFILE_RELEASE_LTO: fat
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+        run: cargo test --release --features p4-gdp-compare --test p4_performance -- --ignored --nocapture
       - name: Compare 1 MiB smolgnet and smoltcp loopback
         run: cargo test --release --test performance -- --ignored --nocapture
