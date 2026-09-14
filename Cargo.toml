@@ -54,3 +54,8 @@ path = "tests/faults.rs"
 [[test]]
 name = "performance"
 path = "tests/performance.rs"
+
+[[test]]
+name = "p4_performance"
+path = "tests/p4_performance.rs"
+required-features = ["p4-gdp-compare"]
