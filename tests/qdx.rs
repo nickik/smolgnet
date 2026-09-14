@@ -62,6 +62,63 @@ fn qdx_frame_crc_failure_keeps_known_frame_boundary() {
 }
 
 #[test]
+fn virtual_nic_pair_moves_native_gnet_frames_only() {
+    let (mut a, mut b) = VirtualNic::pair(2).unwrap();
+    let frame = GnetFrame {
+        vcid: Vcid::VC2,
+        traffic: LinkTraffic::Data,
+        bytes: vec![0x47, 0x4e, 0x45, 0x54, 1, 2, 3, 4],
+    };
+
+    a.transmit_frame(frame.clone()).unwrap();
+    assert_eq!(a.pending_rx_frames(), 0);
+    assert_eq!(b.pending_rx_frames(), 1);
+    assert_eq!(b.receive_frame().unwrap(), Some(frame));
+    assert_eq!(b.receive_frame().unwrap(), None);
+
+    b.set_link_up(false);
+    assert_eq!(a.receive_frame().unwrap_err(), Error::LinkDown);
+}
+
+#[test]
+fn virtual_nic_queue_is_bounded() {
+    let (mut a, _b) = VirtualNic::pair(1).unwrap();
+    let frame = GnetFrame {
+        vcid: Vcid::VC1,
+        traffic: LinkTraffic::Data,
+        bytes: vec![1, 2, 3, 4],
+    };
+    a.transmit_frame(frame.clone()).unwrap();
+    assert_eq!(a.transmit_frame(frame).unwrap_err(), Error::BufferFull);
+}
+
+#[test]
+fn virtual_nic_link_runs_full_gts_endpoint_stack() {
+    let cfg = EndpointConfig::new(4096);
+    let mut client = Endpoint::new(GdpAddress(0x1234_0000_0000_0011), cfg).unwrap();
+    let mut server = Endpoint::new(GdpAddress(0x1234_0000_0000_0022), cfg).unwrap();
+    let css = ServiceSelector::registered(1).unwrap();
+    server.listen(css, ListenerConfig::default());
+
+    let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional);
+    let client_tunnel = client.connect(server.address(), css, profile).unwrap();
+    let mut link = VirtualNicLink::new(16).unwrap();
+
+    link.pump(&mut client, &mut server, 0, 100_000).unwrap();
+    let server_tunnel = server.accept().unwrap();
+
+    client
+        .send(client_tunnel, 0, b"native-virtual-nic", 1)
+        .unwrap();
+    link.pump(&mut client, &mut server, 1, 100_000).unwrap();
+    assert_eq!(
+        server.recv(server_tunnel, 0).unwrap(),
+        Some(b"native-virtual-nic".to_vec())
+    );
+    link.pump(&mut client, &mut server, 2, 100_000).unwrap();
+}
+
+#[test]
 fn qdx_direct_link_runs_full_gts_endpoint_stack() {
     let cfg = EndpointConfig::new(4096);
     let mut client = Endpoint::new(GdpAddress(0x1234_0000_0000_0001), cfg).unwrap();
