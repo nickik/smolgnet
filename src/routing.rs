@@ -117,7 +117,7 @@ impl core::error::Error for RouteTableFull {}
 /// Lookup ignores expired routes and selects the matching route with the
 /// longest prefix. Equal-length ties are resolved by insertion order, matching
 /// the deliberately small and predictable nature of this initial table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RouteTable<const N: usize> {
     routes: [Option<Route>; N],
     len: usize,
