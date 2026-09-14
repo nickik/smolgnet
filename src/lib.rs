@@ -7,6 +7,8 @@ pub mod endpoint;
 pub mod error;
 pub mod gts;
 pub mod link;
+#[cfg(feature = "p4-gdp-compare")]
+mod p4_gdp_compare;
 pub mod qdx;
 pub mod wire;
 
