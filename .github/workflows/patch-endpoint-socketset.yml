@@ -36,23 +36,28 @@ jobs:
                   raise SystemExit('alloc_tunnel anchor not found')
               s = s.replace(anchor, helper, 1)
 
-          s = re.sub(r'self\.tunnels\.get_mut\(&([^\)]+)\)\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record_mut(\1)?', s)
-          s = re.sub(r'self\.tunnels\.get\(&([^\)]+)\)\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record(\1)?', s)
-          s = re.sub(r'self\.tunnels\s*\.get_mut\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record_mut(\1)?', s)
-          s = re.sub(r'self\.tunnels\s*\.get\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record(\1)?', s)
+          # Replace BTreeMap keyed lookups regardless of rustfmt line breaks.
+          s = re.sub(
+              r'self\s*\.tunnels\s*\.get_mut\s*\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?',
+              r'self.tunnel_record_mut(\1)?',
+              s,
+          )
+          s = re.sub(
+              r'self\s*\.tunnels\s*\.get\s*\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?',
+              r'self.tunnel_record(\1)?',
+              s,
+          )
 
           s = s.replace('self.tunnels.insert(local, TunnelRecord { peer: remote, tunnel });', 'self.tunnels.add(TunnelRecord { peer: remote, tunnel })?;')
           s = s.replace('self.tunnels.insert(local, TunnelRecord { peer: src, tunnel });', 'self.tunnels.add(TunnelRecord { peer: src, tunnel })?;')
           s = s.replace('for rec in self.tunnels.values_mut() {', 'for (_, rec) in self.tunnels.iter_mut() {')
 
-          bad = []
-          for line in s.splitlines():
-              if 'self.tunnels.insert' in line or 'self.tunnels.values' in line:
-                  bad.append(line)
-              if ('self.tunnels.get(' in line or 'self.tunnels.get_mut(' in line) and '(handle)' not in line:
-                  bad.append(line)
-          if bad:
-              raise SystemExit('unmigrated tunnel operations: ' + repr(bad))
+          # Direct SocketSet access inside helper methods has no `&key` form.
+          # Any remaining `get(&...)` or `get_mut(&...)` is stale BTreeMap code.
+          if re.search(r'self\s*\.tunnels\s*\.get(?:_mut)?\s*\(&', s):
+              raise SystemExit('unmigrated keyed tunnel lookup remains')
+          if 'self.tunnels.insert' in s or 'self.tunnels.values' in s:
+              raise SystemExit('unmigrated BTreeMap tunnel operation remains')
           p.write_text(s)
           PY
           cargo test --all-targets
