@@ -41,6 +41,59 @@ fn data_requires_real_receiver_credit() {
 }
 
 #[test]
+fn burst_path_moves_same_packet_and_credit_as_single_flits() {
+    let mut a = dlp(128, VcMode::Four);
+    let mut b = dlp(128, VcMode::Four);
+    let p = packet();
+    let n = a.queue_data_packet(&p).unwrap();
+
+    b.note_data_credit_granted(n as u32).unwrap();
+    a.grant_data_tx_credit(n as u32);
+
+    let mut flits = [Flit {
+        vcid: Vcid::CONTROL,
+        data: 0,
+    }; 64];
+    let moved = a.poll_tx_burst(&mut flits).unwrap();
+    assert_eq!(moved, n);
+    assert!(flits[..moved].iter().all(|f| !f.vcid.is_control()));
+
+    let mut packets = Vec::new();
+    assert_eq!(b.receive_burst(&flits[..moved], &mut packets).unwrap(), 1);
+    assert_eq!(packets, vec![p]);
+    assert_eq!(a.data_tx_credit(), 0);
+    assert_eq!(b.data_credit_outstanding(), 0);
+    assert_eq!(b.rx_buffer_in_use(), 0);
+}
+
+#[test]
+fn burst_tx_keeps_control_priority_and_can_fill_with_data() {
+    let mut a = dlp(256, VcMode::Two);
+    let data = packet();
+    let control_header = GdpHeader::global(
+        GdpType::Gctl,
+        SizeClass::Ctrl32,
+        64,
+        GdpAddress(1),
+        GdpAddress(2),
+    );
+    let control = GdpPacket::new(control_header, vec![0; 32]).unwrap();
+    let cn = a.queue_control_packet(&control).unwrap();
+    let dn = a.queue_data_packet(&data).unwrap();
+    a.grant_control_tx_credit(cn as u32);
+    a.grant_data_tx_credit(dn as u32);
+
+    let mut flits = [Flit {
+        vcid: Vcid::CONTROL,
+        data: 0,
+    }; 64];
+    let moved = a.poll_tx_burst(&mut flits).unwrap();
+    assert_eq!(moved, cn + dn);
+    assert!(flits[..cn].iter().all(|f| f.vcid.is_control()));
+    assert!(flits[cn..moved].iter().all(|f| !f.vcid.is_control()));
+}
+
+#[test]
 fn receiver_rejects_flit_not_backed_by_advertised_credit() {
     let mut b = dlp(4, VcMode::Two);
     let f = Flit {
