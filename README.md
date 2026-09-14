@@ -37,6 +37,7 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 - 1 MiB release-mode throughput comparison against stock smoltcp 0.14 TCP loopback
 - `no_std` + `alloc` build
 - deterministic in-memory direct-link harness for endpoint tests
+- paired native `VirtualNic` devices carrying `GnetFrame` directly with no IP/Ethernet/TUN/TAP layer
 
 ## Endpoint construction
 
@@ -100,6 +101,34 @@ assert_eq!(server.recv(server_tunnel, 0)?, Some(b"hello".to_vec()));
 link.pump(&mut client, &mut server, 11, 100_000)?;
 # Ok::<(), smolgnet::Error>(())
 ```
+
+## Native virtual NIC testing
+
+For device-style integration tests, use a pair of `VirtualNic`s. They exchange the normal host-facing `GnetFrame` representation directly:
+
+```text
+Endpoint A -> VirtualNic A ===== VirtualNic B -> Endpoint B
+```
+
+There is no Ethernet envelope, IP packet, MAC address, TUN interface, TAP interface, or kernel network stack in this path.
+
+```rust
+use smolgnet::*;
+
+let (mut nic_a, mut nic_b) = VirtualNic::pair(16)?;
+
+let frame = GnetFrame {
+    vcid: Vcid::VC1,
+    traffic: LinkTraffic::Data,
+    bytes: vec![1, 2, 3, 4],
+};
+
+nic_a.transmit_frame(frame.clone())?;
+assert_eq!(nic_b.receive_frame()?, Some(frame));
+# Ok::<(), smolgnet::Error>(())
+```
+
+`VirtualNicLink` drives two complete `Endpoint`s through these paired devices and is the intended basis for future multi-interface routing tests. If separate Unix processes are later useful, another `GnetFrameDevice` backend can carry the same frames over Unix-domain IPC without changing GNet protocol semantics.
 
 ## Address bootstrap example
 
@@ -192,7 +221,7 @@ cargo test --release --test performance -- --ignored --nocapture
 
 CI also runs this comparison and prints the observed MiB/s, Gbit/s, elapsed time, and smolgnet/smoltcp ratio. Performance is not a pass/fail gate because shared-runner timing varies.
 
-The original upstream smoltcp project also has both an in-memory loopback benchmark and a separate OS TUN/TAP benchmark. A future smolgnet host adapter can add the latter style once a native host-device interface exists; the in-memory comparison is the cleaner first comparison of stack implementation cost.
+The upstream smoltcp project also has host TUN/TAP benchmarks, but smolgnet does not use those as its GNet test transport because they imply IP- or Ethernet-shaped kernel interfaces. Native `VirtualNic` testing is the corresponding smolgnet device-level path.
 
 ## Tests
 
@@ -202,9 +231,9 @@ cargo check --no-default-features
 cargo test --release --test performance -- --ignored --nocapture
 ```
 
-The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, deterministic loss/corruption, and comparative throughput.
+The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, native virtual-NIC frame transfer, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, deterministic loss/corruption, and comparative throughput.
 
-`docs/TEST_CONCEPTS.md` documents the broader test strategy. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
+`docs/TEST_CONCEPTS.md` documents the broader test strategy. `docs/ROUTING_TODO.md` defines the future routing work. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
 
 ## Specification status caveats
 
