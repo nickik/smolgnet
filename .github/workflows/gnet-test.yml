@@ -14,7 +14,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test GNet stack
         run: cargo test --all-targets
-      - name: Check no-std + alloc build
+      - name: Check true no-alloc core build
         run: cargo check --no-default-features
+      - name: Run heapless core acceptance test
+        run: cargo test --no-default-features --test heapless_api
       - name: Compare 1 MiB smolgnet and smoltcp loopback
         run: cargo test --release --test performance -- --ignored --nocapture

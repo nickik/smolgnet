@@ -1,4 +1,6 @@
+#[cfg(feature = "alloc")]
 use alloc::vec;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
@@ -192,6 +194,7 @@ pub struct GtsContext {
     pub destination: GdpAddress,
 }
 
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GtsPacket {
     Connect {
@@ -263,6 +266,7 @@ pub enum GtsPacket {
     },
 }
 
+#[cfg(feature = "alloc")]
 impl GtsPacket {
     pub fn packet_type(&self) -> GtsType {
         match self {

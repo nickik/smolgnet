@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::gts::{GtsTunnel, StreamState, TunnelRole, TunnelState};
 use crate::link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, VcMode};
+use crate::socket::OwnedSocketSet;
 use crate::wire::css::ServiceSelector;
 use crate::wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
@@ -215,7 +216,7 @@ pub struct Endpoint {
     next_control_transaction: u32,
 
     listeners: BTreeMap<ServiceSelector, ListenerConfig>,
-    tunnels: BTreeMap<u32, TunnelRecord>,
+    tunnels: OwnedSocketSet<TunnelRecord>,
     accepted: VecDeque<TunnelHandle>,
     next_tunnel: u32,
     next_reset: u32,
@@ -268,7 +269,7 @@ impl Endpoint {
             credit_request_pending: false,
             next_control_transaction: 0x8000_0000,
             listeners: BTreeMap::new(),
-            tunnels: BTreeMap::new(),
+            tunnels: OwnedSocketSet::new(),
             accepted: VecDeque::new(),
             next_tunnel: 1,
             next_reset: 0x1000_0001,
@@ -324,6 +325,22 @@ impl Endpoint {
         (t, r)
     }
 
+    fn tunnel_record(&self, local_receive_id: u32) -> Result<&TunnelRecord> {
+        let handle = self
+            .tunnels
+            .find(|rec| rec.tunnel.local_receive_id == local_receive_id)
+            .ok_or(Error::UnknownTunnel)?;
+        self.tunnels.get(handle).map_err(|_| Error::UnknownTunnel)
+    }
+
+    fn tunnel_record_mut(&mut self, local_receive_id: u32) -> Result<&mut TunnelRecord> {
+        let handle = self
+            .tunnels
+            .find(|rec| rec.tunnel.local_receive_id == local_receive_id)
+            .ok_or(Error::UnknownTunnel)?;
+        self.tunnels.get_mut(handle).map_err(|_| Error::UnknownTunnel)
+    }
+
     pub fn listen(&mut self, css: ServiceSelector, config: ListenerConfig) {
         self.listeners.insert(css, config);
     }
@@ -333,19 +350,13 @@ impl Endpoint {
     }
 
     pub fn tunnel_state(&self, h: TunnelHandle) -> Result<TunnelState> {
-        Ok(self
-            .tunnels
-            .get(&h.0)
-            .ok_or(Error::UnknownTunnel)?
+        Ok(self.tunnel_record(h.0)?
             .tunnel
             .state)
     }
 
     pub fn stream_state(&self, h: TunnelHandle, id: u8) -> Result<StreamState> {
-        Ok(self
-            .tunnels
-            .get(&h.0)
-            .ok_or(Error::UnknownTunnel)?
+        Ok(self.tunnel_record(h.0)?
             .tunnel
             .streams
             .get(&id)
@@ -354,10 +365,7 @@ impl Endpoint {
     }
 
     pub fn stream_peer_credit(&self, h: TunnelHandle, id: u8) -> Result<Option<u8>> {
-        Ok(self
-            .tunnels
-            .get(&h.0)
-            .ok_or(Error::UnknownTunnel)?
+        Ok(self.tunnel_record(h.0)?
             .tunnel
             .streams
             .get(&id)
@@ -697,7 +705,7 @@ impl Endpoint {
             initial_receive_credit: credit,
             css,
         };
-        self.tunnels.insert(local, TunnelRecord { peer: remote, tunnel });
+        self.tunnels.add(TunnelRecord { peer: remote, tunnel })?;
         self.send_gts(remote, packet, None)?;
         Ok(TunnelHandle(local))
     }
@@ -706,7 +714,7 @@ impl Endpoint {
         profile.validate()?;
         let configured_credit = self.config.gts_receive_slots;
         let (peer, id, credit, remote_id) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             let id = rec.tunnel.alloc_stream_id()?;
             let receives = if profile.unreliable {
                 false
@@ -760,7 +768,7 @@ impl Endpoint {
         now: u64,
     ) -> Result<()> {
         let (peer, profile, packet) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             if rec.tunnel.state != TunnelState::Established {
                 return Err(Error::InvalidState);
             }
@@ -775,7 +783,7 @@ impl Endpoint {
 
     pub fn recv(&mut self, h: TunnelHandle, stream_id: u8) -> Result<Option<Vec<u8>>> {
         let (peer, profile, message, ack) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             let remote = rec.tunnel.remote_id()?;
             let s = rec.tunnel.stream_mut(stream_id)?;
             let profile = s.profile;
@@ -795,7 +803,7 @@ impl Endpoint {
 
     pub fn reset_stream(&mut self, h: TunnelHandle, stream_id: u8, reason: u8) -> Result<()> {
         let (peer, remote) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             rec.tunnel.stream_mut(stream_id)?.reset();
             (rec.peer, rec.tunnel.remote_id()?)
         };
@@ -813,7 +821,7 @@ impl Endpoint {
 
     pub fn close_stream(&mut self, h: TunnelHandle, stream_id: u8) -> Result<()> {
         let (peer, remote, final_sequence) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             let s = rec.tunnel.stream_mut(stream_id)?;
             if !matches!(s.state, StreamState::Open | StreamState::Closing) {
                 return Err(Error::InvalidState);
@@ -836,7 +844,7 @@ impl Endpoint {
 
     pub fn close_tunnel(&mut self, h: TunnelHandle) -> Result<()> {
         let (peer, remote) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             if rec
                 .tunnel
                 .streams
@@ -860,7 +868,7 @@ impl Endpoint {
 
     pub fn reset_tunnel(&mut self, h: TunnelHandle, reason: u8) -> Result<()> {
         let (peer, remote, reset) = {
-            let rec = self.tunnels.get_mut(&h.0).ok_or(Error::UnknownTunnel)?;
+            let rec = self.tunnel_record_mut(h.0)?;
             let remote = rec.tunnel.remote_id()?;
             let reset = rec.tunnel.remote_reset_id.ok_or(Error::InvalidState)?;
             rec.tunnel.reset();
@@ -1047,7 +1055,7 @@ impl Endpoint {
         }
         let local = u32::from_be_bytes(payload[1..5].try_into().unwrap());
         let stream = payload[5];
-        let rec = self.tunnels.get(&local).ok_or(Error::UnknownTunnel)?;
+        let rec = self.tunnel_record(local)?;
         Ok(Some(
             rec.tunnel
                 .streams
@@ -1104,7 +1112,7 @@ impl Endpoint {
                     local_credit,
                     initial_receive_credit,
                 )?;
-                self.tunnels.insert(local, TunnelRecord { peer: src, tunnel });
+                self.tunnels.add(TunnelRecord { peer: src, tunnel })?;
                 self.accepted.push_back(TunnelHandle(local));
                 self.send_gts(
                     src,
@@ -1128,10 +1136,7 @@ impl Endpoint {
                 if status != 0 {
                     return Err(Error::UnknownService);
                 }
-                let rec = self
-                    .tunnels
-                    .get_mut(&initiator_receive_tunnel)
-                    .ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(initiator_receive_tunnel)?;
                 let p = rec
                     .tunnel
                     .streams
@@ -1155,7 +1160,7 @@ impl Endpoint {
             } => {
                 let configured_credit = self.config.gts_receive_slots;
                 let (peer, remote, credit) = {
-                    let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                    let rec = self.tunnel_record_mut(tunnel_id)?;
                     if !Self::remote_stream_id_valid(rec.tunnel.role, stream_id) {
                         return Err(Error::ProfileViolation);
                     }
@@ -1193,7 +1198,7 @@ impl Endpoint {
                 if status != 0 {
                     return Err(Error::ProfileViolation);
                 }
-                let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(tunnel_id)?;
                 let s = rec.tunnel.stream_mut(stream_id)?;
                 if s.profile.unreliable && initial_receive_credit != 0 {
                     return Err(Error::ProfileViolation);
@@ -1206,7 +1211,7 @@ impl Endpoint {
                 ..
             } => {
                 let (peer, remote, ack, profile) = {
-                    let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                    let rec = self.tunnel_record_mut(tunnel_id)?;
                     let s = rec.tunnel.stream_mut(stream_id)?;
                     s.validate_incoming(packet.header.size_class, &data)?;
                     let profile = s.profile;
@@ -1240,7 +1245,7 @@ impl Endpoint {
                 stream_id,
                 ..
             } => {
-                let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(tunnel_id)?;
                 let s = rec.tunnel.stream_mut(stream_id)?;
                 s.validate_incoming(packet.header.size_class, &datagram)?;
                 s.receive_packet(&datagram)?;
@@ -1253,7 +1258,7 @@ impl Endpoint {
                 receive_bitmap,
                 receive_credit,
             } => {
-                let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(tunnel_id)?;
                 let s = rec.tunnel.stream_mut(stream_id)?;
                 s.validate_incoming(packet.header.size_class, &ack)?;
                 s.on_ack(ack_base, receive_bitmap, receive_credit)
@@ -1265,7 +1270,7 @@ impl Endpoint {
                 ack: false,
             } => {
                 let (peer, remote) = {
-                    let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                    let rec = self.tunnel_record_mut(tunnel_id)?;
                     let s = rec.tunnel.stream_mut(stream_id)?;
                     s.validate_incoming(packet.header.size_class, &close)?;
                     s.state = StreamState::Closed;
@@ -1288,7 +1293,7 @@ impl Endpoint {
                 ack: true,
                 ..
             } => {
-                let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(tunnel_id)?;
                 let s = rec.tunnel.stream_mut(stream_id)?;
                 s.validate_incoming(packet.header.size_class, &close)?;
                 s.state = StreamState::Closed;
@@ -1301,7 +1306,7 @@ impl Endpoint {
                 ack: false,
             } => {
                 let (peer, remote) = {
-                    let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                    let rec = self.tunnel_record_mut(tunnel_id)?;
                     rec.tunnel.stream_mut(stream_id)?.reset();
                     (rec.peer, rec.tunnel.remote_id()?)
                 };
@@ -1322,9 +1327,7 @@ impl Endpoint {
                 ack: true,
                 ..
             } => {
-                self.tunnels
-                    .get_mut(&tunnel_id)
-                    .ok_or(Error::UnknownTunnel)?
+                self.tunnel_record_mut(tunnel_id)?
                     .tunnel
                     .stream_mut(stream_id)?
                     .reset();
@@ -1335,7 +1338,7 @@ impl Endpoint {
                 ack: false,
             } => {
                 let (peer, remote) = {
-                    let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                    let rec = self.tunnel_record_mut(tunnel_id)?;
                     if rec
                         .tunnel
                         .streams
@@ -1360,9 +1363,7 @@ impl Endpoint {
                 tunnel_id,
                 ack: true,
             } => {
-                self.tunnels
-                    .get_mut(&tunnel_id)
-                    .ok_or(Error::UnknownTunnel)?
+                self.tunnel_record_mut(tunnel_id)?
                     .tunnel
                     .state = TunnelState::Closed;
                 Ok(())
@@ -1372,7 +1373,7 @@ impl Endpoint {
                 reset_id,
                 ..
             } => {
-                let rec = self.tunnels.get_mut(&tunnel_id).ok_or(Error::UnknownTunnel)?;
+                let rec = self.tunnel_record_mut(tunnel_id)?;
                 if reset_id != rec.tunnel.local_reset_id {
                     return Err(Error::InvalidField);
                 }
@@ -1384,7 +1385,7 @@ impl Endpoint {
 
     pub fn tick(&mut self, now: u64) -> Result<usize> {
         let mut pending = Vec::new();
-        for rec in self.tunnels.values_mut() {
+        for (_, rec) in self.tunnels.iter_mut() {
             if rec.tunnel.state != TunnelState::Established {
                 continue;
             }
