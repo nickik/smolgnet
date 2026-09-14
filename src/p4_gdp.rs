@@ -3,7 +3,7 @@
 use bitvec::prelude::*;
 use p4rs::packet_in;
 
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::wire::gdp::{GdpAddress, GdpAddresses, GdpHeader, GdpType, GdpWireConfig, SizeClass};
 
 p4_macro::use_p4!(
@@ -35,7 +35,7 @@ pub struct ParsedGdp {
 /// bit is one for local addressing. A caller using an inverted GdpWireConfig
 /// must use the handwritten fallback until the P4 target grows configurable
 /// form-bit semantics.
-pub fn parse_header(bytes: &[u8]) -> Result<ParsedGdp> {
+pub fn parse_header(bytes: &[u8]) -> crate::error::Result<ParsedGdp> {
     if bytes.len() < 4 {
         return Err(Error::InvalidLength);
     }
@@ -98,7 +98,7 @@ pub fn parse_header(bytes: &[u8]) -> Result<ParsedGdp> {
     })
 }
 
-pub fn decode_header(bytes: &[u8], local_prefix: u64) -> Result<GdpHeader> {
+pub fn decode_header(bytes: &[u8], local_prefix: u64) -> crate::error::Result<GdpHeader> {
     let parsed = parse_header(bytes)?;
     let size_class = SizeClass::from_wire(parsed.size_class)?;
     let packet_type = GdpType::from_wire(parsed.packet_type);
@@ -131,7 +131,7 @@ pub fn decode_header(bytes: &[u8], local_prefix: u64) -> Result<GdpHeader> {
 }
 
 /// Validate a complete GDP packet with the x4c parser and the GDP size table.
-pub fn parse_and_validate(bytes: &[u8]) -> Result<ParsedGdp> {
+pub fn parse_and_validate(bytes: &[u8]) -> crate::error::Result<ParsedGdp> {
     let parsed = parse_header(bytes)?;
     let size_class = SizeClass::from_wire(parsed.size_class)?;
     let header_len = if parsed.local_form { 8 } else { 20 };
