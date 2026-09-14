@@ -1,14 +1,15 @@
-mod support;
+#[path = "support/qdx.rs"]
+mod qdx_support;
 
 use std::time::{Duration, Instant as StdInstant};
 
+use qdx_support::QdxDirectLink;
 use smolgnet::*;
 use smoltcp::iface::{Config as SmolConfig, Interface as SmolInterface, SocketSet};
 use smoltcp::phy::{Loopback, Medium};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant as SmolInstant;
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
-use support::qdx::QdxDirectLink;
 
 const ONE_MIB: usize = 1024 * 1024;
 
