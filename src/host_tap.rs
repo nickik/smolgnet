@@ -35,7 +35,10 @@ pub fn encode_tap_frame(frame: &GnetFrame, addressing: TapAddressing) -> Vec<u8>
     out.extend_from_slice(&GNET_TAP_ETHERTYPE.to_be_bytes());
     out.push(SHIM_VERSION);
     out.push(frame.vcid.get());
-    out.push(match frame.traffic { LinkTraffic::Control => 0, LinkTraffic::Data => 1 });
+    out.push(match frame.traffic {
+        LinkTraffic::Control => 0,
+        LinkTraffic::Data => 1,
+    });
     out.push(0);
     out.extend_from_slice(&frame.bytes);
     out
@@ -73,6 +76,17 @@ pub fn decode_tap_frame(bytes: &[u8], addressing: TapAddressing) -> Result<GnetF
     })
 }
 
+fn is_candidate_gnet_frame(bytes: &[u8], addressing: TapAddressing) -> bool {
+    if bytes.len() < ETH_HEADER {
+        return false;
+    }
+    let dst: [u8; 6] = bytes[0..6].try_into().unwrap();
+    if dst != addressing.local_mac && dst != [0xff; 6] {
+        return false;
+    }
+    u16::from_be_bytes([bytes[12], bytes[13]]) == GNET_TAP_ETHERTYPE
+}
+
 /// Linux TAP-backed QDX-GNET frame adapter.
 ///
 /// This is a host/testing adaptation. Native systems should use a real
@@ -95,7 +109,10 @@ impl TapDevice {
         const IFF_NO_PI: libc::c_short = 0x1000;
 
         if name.is_empty() || name.len() >= libc::IFNAMSIZ {
-            return Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid TAP name"));
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "invalid TAP name",
+            ));
         }
 
         let file = OpenOptions::new()
@@ -117,7 +134,9 @@ impl TapDevice {
         Ok(Self::from_file(file, addressing))
     }
 
-    pub fn addressing(&self) -> TapAddressing { self.addressing }
+    pub fn addressing(&self) -> TapAddressing {
+        self.addressing
+    }
 }
 
 impl GnetFrameDevice for TapDevice {
@@ -127,12 +146,22 @@ impl GnetFrameDevice for TapDevice {
     }
 
     fn receive_frame(&mut self) -> Result<Option<GnetFrame>> {
-        let mut buffer = vec![0u8; MAX_TAP_FRAME];
-        match self.file.read(&mut buffer) {
-            Ok(0) => Ok(None),
-            Ok(n) => decode_tap_frame(&buffer[..n], self.addressing).map(Some),
-            Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
-            Err(_) => Err(Error::LinkDown),
+        let mut buffer = [0u8; MAX_TAP_FRAME];
+        loop {
+            match self.file.read(&mut buffer) {
+                Ok(0) => return Ok(None),
+                Ok(n) => {
+                    let bytes = &buffer[..n];
+                    // A real host bridge can carry unrelated Ethernet traffic.
+                    // Ignore it rather than surfacing it as a GNet parse error.
+                    if !is_candidate_gnet_frame(bytes, self.addressing) {
+                        continue;
+                    }
+                    return decode_tap_frame(bytes, self.addressing).map(Some);
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(_) => return Err(Error::LinkDown),
+            }
         }
     }
 }
@@ -152,5 +181,14 @@ mod tests {
         };
         let encoded = encode_tap_frame(&frame, addresses);
         assert_eq!(decode_tap_frame(&encoded, peer_view).unwrap(), frame);
+    }
+
+    #[test]
+    fn unrelated_ethernet_frame_is_not_a_gnet_candidate() {
+        let addresses = TapAddressing::new([2, 0, 0, 0, 0, 1], [2, 0, 0, 0, 0, 2]);
+        let mut frame = vec![0u8; ETH_HEADER + 8];
+        frame[0..6].copy_from_slice(&addresses.local_mac);
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        assert!(!is_candidate_gnet_frame(&frame, addresses));
     }
 }
