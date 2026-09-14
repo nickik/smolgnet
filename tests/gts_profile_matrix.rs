@@ -191,7 +191,9 @@ fn one_tunnel_exercises_every_legal_stream_profile_and_rejects_every_illegal_one
     }
 
     let (mut a, mut b, mut link) = pair();
-    let css = ServiceSelector::registered(0x21).unwrap();
+    // Reuse the registered selector already covered by endpoint CONNECT tests;
+    // this matrix is about stream-profile semantics rather than CSS encodings.
+    let css = ServiceSelector::registered(1).unwrap();
     b.listen(css, ListenerConfig::default());
 
     let ah = a.connect(b.address(), css, legal[0]).unwrap();
