@@ -4,6 +4,7 @@ on:
   push:
     branches: [gnet-point-to-point]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
