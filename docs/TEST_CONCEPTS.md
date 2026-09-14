@@ -19,7 +19,8 @@ The tests define the public API. Implementation details should move to satisfy t
 | TCP window | GTS message Receive Credit |
 | TCP sequence/retransmit tests | GTS per-message sequence/selective ACK/RTO |
 | TCP close/reset | STREAM_CLOSE/STREAM_RESET/TUNNEL_CLOSE/RESET |
-| raw IP socket | raw GDP/GCTL wire tests |
+| raw IP socket | no raw GDP application socket; wire codec tests only |
+| TUN/TAP host device | paired native `VirtualNic` devices carrying `GnetFrame` |
 
 ## Public API target
 
@@ -106,7 +107,7 @@ Test GTS components without an Endpoint harness:
 
 ## Level 4: complete two-endpoint tests
 
-Run normal smolgnet endpoint code over an in-memory direct link:
+Run normal smolgnet endpoint code first over the direct in-memory link and then through paired native `VirtualNic` devices using the QDX-style `GnetFrameDevice` boundary.
 
 1. Real GCTL CREDIT bootstrap from bounded endpoint buffers.
 2. GCTL echo roundtrip and continued link-credit replenishment.
@@ -126,6 +127,12 @@ Run normal smolgnet endpoint code over an in-memory direct link:
 16. GDP Local endpoint operation inside a configured local context.
 17. Link-local-only endpoint startup.
 18. SOLICIT -> ADVERTISE -> ADDRESS_OFFER -> ADDRESS_CLAIM -> ADDRESS_ACK assignment.
+19. `VirtualNic` A -> B native `GnetFrame` transfer with no host protocol encapsulation.
+20. Bounded virtual-NIC queue backpressure.
+21. Complete GTS connection/message transfer through `VirtualNicLink`.
+22. Virtual link up/down behavior.
+
+The virtual-NIC path is intentionally not TUN or TAP. TUN is tied to IP-shaped packets and TAP to Ethernet-shaped frames; neither is part of GNet.
 
 ## Level 5: deterministic fault injection
 
@@ -167,7 +174,7 @@ Application -> TCP -> IPv4 -> Ethernet -> Loopback -> same Interface
 
 Connection establishment is completed before the timed region. Both paths verify the full 1 MiB payload at the receiver.
 
-The comparison follows the architecture of upstream smoltcp's own `loopback_benchmark.rs`, making it a useful measurement of library implementation cost without OS TUN/TAP overhead.
+The comparison follows the architecture of upstream smoltcp's own `loopback_benchmark.rs`, making it a useful measurement of library implementation cost without host-kernel networking overhead.
 
 Run:
 
@@ -186,6 +193,20 @@ The benchmark prints:
 
 Performance is observational, not a CI threshold, because shared runners vary.
 
+## Future routed integration tests
+
+Routing tests should compose the same native virtual NICs rather than introduce host networking:
+
+```text
+Endpoint A -- VirtualNic == Router iface 0
+                              |
+                        GDP route lookup
+                              |
+Endpoint B -- VirtualNic == Router iface 1
+```
+
+This allows connected/static/default route tests, Hop Limit handling, GCTL forwarding errors, Local/Global GDP re-encoding, and routed GTS tests while remaining entirely native GNet.
+
 ## Explicitly not tested yet
 
 - routing or longest-prefix forwarding;
@@ -198,4 +219,4 @@ Performance is observational, not a CI threshold, because shared runners vary.
 - native DLP recovery from physically lost flits;
 - full network-wide performance simulation.
 
-The direct-link and fault harnesses are deliberately small. They exist to move real DLP flits between real Endpoint instances and validate protocol behavior, not to become a general network simulator.
+The direct-link, virtual-NIC, and fault harnesses are deliberately small. They exist to move real GNet data between real Endpoint instances and validate protocol behavior, not to become a general network simulator.
