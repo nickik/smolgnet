@@ -14,10 +14,15 @@ autobenches = false
 [features]
 default = ["std"]
 std = []
-p4-gdp-compare = ["std", "dep:p4-gdp"]
+p4-gdp-compare = ["std", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
 
 [dependencies]
-p4-gdp = { path = "p4-gdp", optional = true }
+p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
+p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
+bitvec = { version = "1.0", optional = true }
+colored = { version = "3", optional = true }
+num = { version = "0.4", features = ["serde"], optional = true }
+usdt = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
