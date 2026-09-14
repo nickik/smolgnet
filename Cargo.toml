@@ -32,6 +32,7 @@ num = { version = "0.4", features = ["serde"], optional = true }
 usdt = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
+libc = "0.2"
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 
 [[test]]
@@ -72,6 +73,11 @@ required-features = ["alloc"]
 name = "qdx"
 path = "tests/qdx.rs"
 required-features = ["alloc"]
+
+[[test]]
+name = "process_link"
+path = "tests/process_link.rs"
+required-features = ["std", "alloc"]
 
 [[test]]
 name = "performance"
