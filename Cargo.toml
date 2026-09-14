@@ -14,8 +14,10 @@ autobenches = false
 [features]
 default = ["std"]
 std = []
+p4-gdp-compare = ["std", "dep:p4-gdp"]
 
 [dependencies]
+p4-gdp = { path = "p4-gdp", optional = true }
 
 [dev-dependencies]
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
