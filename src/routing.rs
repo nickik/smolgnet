@@ -14,7 +14,7 @@ impl core::error::Error for PrefixLengthError {}
 
 /// Canonical GDP destination prefix.
 ///
-/// Host bits are always cleared when the prefix is constructed.
+/// Host bits are cleared when the prefix is constructed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GdpPrefix {
     network: GdpAddress,
@@ -26,9 +26,9 @@ impl GdpPrefix {
         if prefix_len > 64 {
             return Err(PrefixLengthError);
         }
-        let mask = prefix_mask(prefix_len);
+
         Ok(Self {
-            network: GdpAddress(address.0 & mask),
+            network: GdpAddress(address.0 & prefix_mask(prefix_len)),
             prefix_len,
         })
     }
@@ -62,79 +62,42 @@ const fn prefix_mask(prefix_len: u8) -> u64 {
     }
 }
 
-/// Stable index identifying a native GNet router interface/link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InterfaceHandle(pub u16);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteOrigin {
-    Connected,
-    Static,
-    Dynamic(u16),
-}
-
-/// One RIB/FIB entry.
+/// A GDP prefix routed through a router.
 ///
-/// `next_hop == None` means the destination is directly reachable on the
-/// selected interface. Otherwise the frame is sent toward the named GDP router.
+/// This intentionally mirrors smoltcp's small route-table model. Interface
+/// selection, forwarding state, dynamic routing, and router policy are outside
+/// this first smolgnet routing milestone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Route {
     pub prefix: GdpPrefix,
-    pub next_hop: Option<GdpAddress>,
-    pub interface: InterfaceHandle,
-    pub origin: RouteOrigin,
-    /// Lower values are preferred among routes with the same prefix length.
-    pub preference: u16,
-    /// Lower values are preferred after administrative preference.
-    pub metric: u32,
-    /// `None` means preferred forever. A deprecated route remains usable until
-    /// expiry, but loses to an otherwise-equivalent preferred route.
+    pub via_router: GdpAddress,
+    /// `None` means preferred forever. Kept for parity with smoltcp's route
+    /// model; the initial lookup algorithm does not use this field.
     pub preferred_until: Option<Instant>,
     /// `None` means the route never expires.
     pub expires_at: Option<Instant>,
 }
 
 impl Route {
-    pub fn connected(prefix: GdpPrefix, interface: InterfaceHandle) -> Self {
+    pub fn new(prefix: GdpPrefix, via_router: GdpAddress) -> Self {
         Self {
             prefix,
-            next_hop: None,
-            interface,
-            origin: RouteOrigin::Connected,
-            preference: 0,
-            metric: 0,
+            via_router,
             preferred_until: None,
             expires_at: None,
         }
     }
 
-    pub fn static_via(
-        prefix: GdpPrefix,
-        next_hop: GdpAddress,
-        interface: InterfaceHandle,
-    ) -> Self {
-        Self {
-            prefix,
-            next_hop: Some(next_hop),
-            interface,
-            origin: RouteOrigin::Static,
-            preference: 100,
-            metric: 0,
-            preferred_until: None,
-            expires_at: None,
-        }
+    pub fn new_default(via_router: GdpAddress) -> Self {
+        Self::new(GdpPrefix::default_route(), via_router)
     }
 
-    pub fn default_via(next_hop: GdpAddress, interface: InterfaceHandle) -> Self {
-        Self::static_via(GdpPrefix::default_route(), next_hop, interface)
+    pub fn is_default(self) -> bool {
+        self.prefix.prefix_len() == 0
     }
 
     pub fn is_expired(self, now: Instant) -> bool {
         matches!(self.expires_at, Some(expires_at) if now > expires_at)
-    }
-
-    pub fn is_preferred(self, now: Instant) -> bool {
-        !matches!(self.preferred_until, Some(until) if now > until)
     }
 }
 
@@ -149,14 +112,11 @@ impl core::fmt::Display for RouteTableFull {
 
 impl core::error::Error for RouteTableFull {}
 
-/// Fixed-capacity routing table suitable for `no_std` routers and endpoints.
+/// Fixed-capacity GDP routing table.
 ///
-/// Lookup order is:
-/// 1. longest destination prefix;
-/// 2. non-deprecated route;
-/// 3. lower administrative preference;
-/// 4. lower metric;
-/// 5. lower interface handle, for deterministic final tie-breaking.
+/// Lookup ignores expired routes and selects the matching route with the
+/// longest prefix. Equal-length ties are resolved by insertion order, matching
+/// the deliberately small and predictable nature of this initial table.
 #[derive(Debug, Clone)]
 pub struct RouteTable<const N: usize> {
     routes: [Option<Route>; N],
@@ -200,11 +160,10 @@ impl<const N: usize> RouteTable<N> {
         Err(RouteTableFull)
     }
 
-    pub fn remove(&mut self, prefix: GdpPrefix, interface: InterfaceHandle) -> Option<Route> {
+    pub fn remove(&mut self, prefix: GdpPrefix) -> Option<Route> {
         for slot in &mut self.routes {
             if let Some(route) = *slot
                 && route.prefix == prefix
-                && route.interface == interface
             {
                 *slot = None;
                 self.len -= 1;
@@ -214,13 +173,12 @@ impl<const N: usize> RouteTable<N> {
         None
     }
 
-    pub fn set_default(
+    pub fn add_default_route(
         &mut self,
-        next_hop: GdpAddress,
-        interface: InterfaceHandle,
+        via_router: GdpAddress,
     ) -> Result<Option<Route>, RouteTableFull> {
-        let old = self.remove(GdpPrefix::default_route(), interface);
-        match self.add(Route::default_via(next_hop, interface)) {
+        let old = self.remove_default_route();
+        match self.add(Route::new_default(via_router)) {
             Ok(()) => Ok(old),
             Err(err) => {
                 if let Some(old) = old {
@@ -231,23 +189,30 @@ impl<const N: usize> RouteTable<N> {
         }
     }
 
-    pub fn default_for_interface(&self, interface: InterfaceHandle) -> Option<Route> {
-        self.routes.iter().flatten().copied().find(|route| {
-            route.prefix.prefix_len() == 0 && route.interface == interface
-        })
+    pub fn get_default_route(&self) -> Option<Route> {
+        self.routes.iter().flatten().copied().find(|route| route.is_default())
     }
 
-    pub fn lookup(&self, destination: GdpAddress, now: Instant) -> Option<Route> {
+    pub fn remove_default_route(&mut self) -> Option<Route> {
+        self.remove(GdpPrefix::default_route())
+    }
+
+    pub fn lookup(&self, destination: GdpAddress, now: Instant) -> Option<GdpAddress> {
         let mut best: Option<Route> = None;
+
         for route in self.routes.iter().flatten().copied() {
             if route.is_expired(now) || !route.prefix.contains(destination) {
                 continue;
             }
-            if best.map_or(true, |current| route_better(route, current, now)) {
+
+            if best.map_or(true, |current| {
+                route.prefix.prefix_len() > current.prefix.prefix_len()
+            }) {
                 best = Some(route);
             }
         }
-        best
+
+        best.map(|route| route.via_router)
     }
 
     pub fn prune_expired(&mut self, now: Instant) -> usize {
@@ -261,13 +226,6 @@ impl<const N: usize> RouteTable<N> {
         }
         removed
     }
-}
-
-fn route_better(candidate: Route, current: Route, now: Instant) -> bool {
-    candidate.prefix.prefix_len() > current.prefix.prefix_len()
-        || (candidate.prefix.prefix_len() == current.prefix.prefix_len()
-            && (candidate.is_preferred(now), core::cmp::Reverse(candidate.preference), core::cmp::Reverse(candidate.metric), core::cmp::Reverse(candidate.interface))
-                > (current.is_preferred(now), core::cmp::Reverse(current.preference), core::cmp::Reverse(current.metric), core::cmp::Reverse(current.interface)))
 }
 
 #[cfg(test)]
@@ -289,57 +247,74 @@ mod tests {
 
     #[test]
     fn longest_prefix_wins_over_default() {
-        let mut table: RouteTable<4> = RouteTable::new();
-        table.add(Route::default_via(addr(1), InterfaceHandle(0))).unwrap();
-        table.add(Route::static_via(
-            GdpPrefix::new(addr(0x1234_0000_0000_0000), 16).unwrap(),
-            addr(2),
-            InterfaceHandle(1),
-        )).unwrap();
-        table.add(Route::static_via(
-            GdpPrefix::new(addr(0x1234_5600_0000_0000), 24).unwrap(),
-            addr(3),
-            InterfaceHandle(2),
-        )).unwrap();
+        let mut routes: RouteTable<4> = RouteTable::new();
+        routes.add_default_route(addr(1)).unwrap();
+        routes
+            .add(Route::new(
+                GdpPrefix::new(addr(0x1234_0000_0000_0000), 16).unwrap(),
+                addr(2),
+            ))
+            .unwrap();
+        routes
+            .add(Route::new(
+                GdpPrefix::new(addr(0x1234_5600_0000_0000), 24).unwrap(),
+                addr(3),
+            ))
+            .unwrap();
 
-        let route = table.lookup(addr(0x1234_5678_0000_0001), Instant::ZERO).unwrap();
-        assert_eq!(route.next_hop, Some(addr(3)));
-        assert_eq!(route.interface, InterfaceHandle(2));
-
-        let fallback = table.lookup(addr(0x9999_0000_0000_0001), Instant::ZERO).unwrap();
-        assert_eq!(fallback.next_hop, Some(addr(1)));
+        assert_eq!(
+            routes.lookup(addr(0x1234_5678_0000_0001), Instant::ZERO),
+            Some(addr(3))
+        );
+        assert_eq!(
+            routes.lookup(addr(0x9999_0000_0000_0001), Instant::ZERO),
+            Some(addr(1))
+        );
     }
 
     #[test]
-    fn expiry_and_preference_are_honored() {
+    fn expired_routes_are_ignored() {
         let prefix = GdpPrefix::new(addr(0xaaaa_0000_0000_0000), 16).unwrap();
-        let mut table: RouteTable<4> = RouteTable::new();
+        let mut routes: RouteTable<2> = RouteTable::new();
 
-        let mut deprecated = Route::static_via(prefix, addr(10), InterfaceHandle(1));
-        deprecated.preferred_until = Some(Instant::from_millis(10));
-        deprecated.expires_at = Some(Instant::from_millis(100));
-        deprecated.preference = 10;
+        let mut route = Route::new(prefix, addr(10));
+        route.expires_at = Some(Instant::from_millis(10));
+        routes.add(route).unwrap();
+        routes.add_default_route(addr(20)).unwrap();
 
-        let mut preferred = Route::static_via(prefix, addr(20), InterfaceHandle(2));
-        preferred.preference = 100;
+        assert_eq!(
+            routes.lookup(addr(0xaaaa_1234), Instant::from_millis(5)),
+            Some(addr(10))
+        );
+        assert_eq!(
+            routes.lookup(addr(0xaaaa_1234), Instant::from_millis(11)),
+            Some(addr(20))
+        );
+    }
 
-        table.add(deprecated).unwrap();
-        table.add(preferred).unwrap();
+    #[test]
+    fn default_route_can_be_replaced_and_removed() {
+        let mut routes: RouteTable<2> = RouteTable::new();
+        assert_eq!(routes.add_default_route(addr(1)).unwrap(), None);
+        assert_eq!(routes.get_default_route().unwrap().via_router, addr(1));
 
-        assert_eq!(table.lookup(addr(0xaaaa_1234), Instant::from_millis(5)).unwrap().next_hop, Some(addr(10)));
-        assert_eq!(table.lookup(addr(0xaaaa_1234), Instant::from_millis(20)).unwrap().next_hop, Some(addr(20)));
+        let old = routes.add_default_route(addr(2)).unwrap().unwrap();
+        assert_eq!(old.via_router, addr(1));
+        assert_eq!(routes.get_default_route().unwrap().via_router, addr(2));
 
-        preferred.expires_at = Some(Instant::from_millis(30));
+        assert_eq!(routes.remove_default_route().unwrap().via_router, addr(2));
+        assert!(routes.get_default_route().is_none());
     }
 
     #[test]
     fn table_capacity_and_pruning_are_bounded() {
-        let mut table: RouteTable<1> = RouteTable::new();
-        let mut route = Route::default_via(addr(1), InterfaceHandle(0));
+        let mut routes: RouteTable<1> = RouteTable::new();
+        let mut route = Route::new_default(addr(1));
         route.expires_at = Some(Instant::from_millis(10));
-        table.add(route).unwrap();
-        assert_eq!(table.add(Route::default_via(addr(2), InterfaceHandle(1))), Err(RouteTableFull));
-        assert_eq!(table.prune_expired(Instant::from_millis(11)), 1);
-        assert!(table.is_empty());
+        routes.add(route).unwrap();
+
+        assert_eq!(routes.add(Route::new_default(addr(2))), Err(RouteTableFull));
+        assert_eq!(routes.prune_expired(Instant::from_millis(11)), 1);
+        assert!(routes.is_empty());
     }
 }
