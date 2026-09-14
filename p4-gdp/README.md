@@ -96,6 +96,19 @@ GDP specification / smolgnet wire behavior
 
 The generated Rust is a dataplane implementation, not a replacement for the full smolgnet stack.
 
+The Oxide P4 dependency is pinned rather than following `main` so compiler behavior does not change underneath the conformance suite. See `TODO.md` for the pinned revision.
+
+## Current x4c representation
+
+The GDP wire format is unchanged. However, the x4c Rust target has limited exercised support for 64-bit scalar P4 fields, so the initial P4 representation expresses each 64-bit global GDP address as two adjacent 32-bit fields:
+
+```text
+GDP 64-bit destination = destination_hi || destination_lo
+GDP 64-bit source      = source_hi      || source_lo
+```
+
+This preserves the exact 128-bit address area on the wire. It is an implementation detail of this target, not a protocol change. A later hardware P4 target may use native `bit<64>` fields if its compiler handles them cleanly.
+
 ## Relationship to smolgnet
 
 For now, keep the two implementations separate.
@@ -111,15 +124,31 @@ Once the P4 implementation is stable and well tested, we can evaluate whether sm
 
 No decision is made by this subproject yet.
 
-## Planned layout
+## Current layout
 
 ```text
 p4-gdp/
+├── Cargo.toml
 ├── README.md
 ├── TODO.md
 ├── TESTING.md
-└── p4/
-    └── gdp.p4        # added once the x4c build/test harness is established
+├── p4/
+│   ├── core.p4
+│   └── gdp.p4
+├── src/
+│   └── lib.rs
+└── tests/
+    └── conformance.rs
+
+.github/workflows/p4-gdp.yml
+```
+
+`src/lib.rs` invokes `p4_macro::use_p4!`, so compiling this crate runs x4c and generates the Rust pipeline. `tests/conformance.rs` constructs GDP packets with the canonical smolgnet implementation and executes those same bytes through the generated P4 pipeline.
+
+Run it from the repository root with:
+
+```sh
+cargo test --manifest-path p4-gdp/Cargo.toml --all-targets
 ```
 
 ## Design rule
