@@ -7,6 +7,7 @@ pub mod bounded_gts;
 pub mod error;
 pub mod socket;
 pub mod storage;
+pub mod time;
 pub mod wire;
 
 #[cfg(feature = "alloc")]
@@ -19,6 +20,12 @@ pub mod gts;
 pub mod link;
 #[cfg(feature = "alloc")]
 pub mod qdx;
+#[cfg(feature = "alloc")]
+pub mod runtime;
+#[cfg(feature = "alloc")]
+pub mod trace;
+#[cfg(feature = "host-tap")]
+pub mod host_tap;
 
 pub use bounded_gts::{
     AckState as BoundedAckState, BoundedGtsSocket, BoundedStreamSlot, ReceivedMessage,
@@ -30,6 +37,7 @@ pub use socket::{SocketHandle, SocketSet, SocketStorage};
 #[cfg(feature = "alloc")]
 pub use socket::OwnedSocketSet;
 pub use storage::{MessageBuffer, MessagePool, MessageSlot, PacketBuffer, PacketMetadata, RingBuffer};
+pub use time::{Duration, Instant, PollAt};
 pub use wire::css::{CssWire, ServiceSelector};
 pub use wire::gdp::{AddressForm, GdpAddress, GdpHeader, GdpType, GdpWireConfig, SizeClass};
 pub use wire::gts::{Direction, GtsType, StreamProfile};
@@ -47,6 +55,14 @@ pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
 pub use link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
 #[cfg(feature = "alloc")]
 pub use qdx::{GnetFlitDevice, GnetFrameDevice, QdxDirectLink};
+#[cfg(feature = "alloc")]
+pub use runtime::EndpointRuntimeExt;
+#[cfg(all(feature = "alloc", feature = "async"))]
+pub use runtime::{AsyncEndpoint, WakerRegistration};
+#[cfg(feature = "alloc")]
+pub use trace::{TraceDirection, TraceEvent, TraceSink, Tracer};
+#[cfg(feature = "host-tap")]
+pub use host_tap::{decode_tap_frame, encode_tap_frame, TapAddressing, TapDevice, GNET_TAP_ETHERTYPE};
 #[cfg(feature = "alloc")]
 pub use wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
