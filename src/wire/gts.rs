@@ -1,6 +1,4 @@
 #[cfg(feature = "alloc")]
-use alloc::vec;
-#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
@@ -194,6 +192,132 @@ pub struct GtsContext {
     pub destination: GdpAddress,
 }
 
+/// Profile-independent GTS fields produced by either lower wire decoder.
+///
+/// DATA always probes two octets after sequence. For a variable stream (and
+/// always DATA_END) those octets are the valid-data length; for fixed DATA
+/// they are simply the first two payload octets and the common layer ignores
+/// the probe. DATAGRAM similarly probes six octets so every combination of
+/// sequenced/variable can be interpreted after the negotiated profile is
+/// supplied by the higher GTS layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum GtsLowerPacket {
+    Connect {
+        initiator_receive_tunnel: u32,
+        initiator_reset_id: u32,
+        profile: u16,
+        initial_receive_credit: u8,
+    },
+    ConnectAck {
+        initiator_receive_tunnel: u32,
+        responder_receive_tunnel: u32,
+        responder_reset_id: u32,
+        status: u8,
+        initial_receive_credit: u8,
+        reserved: u8,
+    },
+    StreamOpen {
+        tunnel_id: u32,
+        stream_id: u8,
+        profile: u16,
+        initial_receive_credit: u8,
+        reserved: u8,
+    },
+    StreamAck {
+        tunnel_id: u32,
+        stream_id: u8,
+        status: u8,
+        initial_receive_credit: u8,
+        reserved: u8,
+    },
+    Data {
+        tunnel_id: u32,
+        stream_id: u8,
+        sequence: u32,
+        end: bool,
+        option_probe: u16,
+    },
+    Ack {
+        tunnel_id: u32,
+        stream_id: u8,
+        ack_base: u32,
+        receive_bitmap: u32,
+        receive_credit: u8,
+        reserved: u8,
+    },
+    Datagram {
+        tunnel_id: u32,
+        stream_id: u8,
+        option_probe: [u8; 6],
+    },
+    StreamClose {
+        tunnel_id: u32,
+        stream_id: u8,
+        final_sequence: u32,
+        ack: bool,
+    },
+    TunnelClose {
+        tunnel_id: u32,
+        ack: bool,
+    },
+    Reset {
+        tunnel_id: u32,
+        reset_id: u32,
+        reason: u8,
+    },
+    StreamReset {
+        tunnel_id: u32,
+        stream_id: u8,
+        reason: u8,
+        reserved: u8,
+        ack: bool,
+    },
+}
+
+impl GtsLowerPacket {
+    pub const fn packet_type(self) -> GtsType {
+        match self {
+            Self::Connect { .. } => GtsType::Connect,
+            Self::ConnectAck { .. } => GtsType::ConnectAck,
+            Self::StreamOpen { .. } => GtsType::StreamOpen,
+            Self::StreamAck { .. } => GtsType::StreamAck,
+            Self::Data { end: false, .. } => GtsType::Data,
+            Self::Data { end: true, .. } => GtsType::DataEnd,
+            Self::Ack { .. } => GtsType::Ack,
+            Self::Datagram { .. } => GtsType::Datagram,
+            Self::StreamClose { ack: false, .. } => GtsType::StreamClose,
+            Self::StreamClose { ack: true, .. } => GtsType::StreamCloseAck,
+            Self::TunnelClose { ack: false, .. } => GtsType::TunnelClose,
+            Self::TunnelClose { ack: true, .. } => GtsType::TunnelCloseAck,
+            Self::Reset { .. } => GtsType::Reset,
+            Self::StreamReset { ack: false, .. } => GtsType::StreamReset,
+            Self::StreamReset { ack: true, .. } => GtsType::StreamResetAck,
+        }
+    }
+}
+
+pub(crate) trait GtsLowerDecoder {
+    fn parse_lower(buf: &[u8]) -> Result<GtsLowerPacket>;
+}
+
+pub(crate) fn lower_prefix_len(ty: GtsType) -> Result<usize> {
+    Ok(match ty {
+        GtsType::Connect => 12,
+        GtsType::ConnectAck => 16,
+        GtsType::StreamOpen => 10,
+        GtsType::StreamAck => 9,
+        GtsType::Data | GtsType::DataEnd => 12,
+        GtsType::Ack => 16,
+        GtsType::Datagram => 12,
+        GtsType::StreamClose | GtsType::StreamCloseAck => 10,
+        GtsType::TunnelClose | GtsType::TunnelCloseAck => 5,
+        GtsType::Reset => 10,
+        GtsType::StreamReset | GtsType::StreamResetAck => 8,
+        GtsType::Reserved => return Err(Error::Unsupported),
+    })
+}
+
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GtsPacket {
@@ -363,477 +487,327 @@ impl GtsPacket {
     }
 
     pub fn encode(&self, ctx: GtsContext, profile: Option<StreamProfile>) -> Result<Vec<u8>> {
-        let total = ctx.size_class.bytes();
-        if total < 4 {
-            return Err(Error::InvalidLength);
-        }
-        let ty = self.packet_type();
-        let mut o = vec![0u8; total];
-        o[0] = ty as u8;
-        let crc_off = total - 4;
-        let mut meta_end = crc_off;
-        let mut pos = 1;
-
-        macro_rules! u32w {
-            ($v:expr) => {{
-                if pos + 4 > crc_off { return Err(Error::InvalidLength); }
-                o[pos..pos + 4].copy_from_slice(&$v.to_be_bytes());
-                pos += 4;
-            }};
-        }
-        macro_rules! u16w {
-            ($v:expr) => {{
-                if pos + 2 > crc_off { return Err(Error::InvalidLength); }
-                o[pos..pos + 2].copy_from_slice(&$v.to_be_bytes());
-                pos += 2;
-            }};
-        }
-        macro_rules! u8w {
-            ($v:expr) => {{
-                if pos >= crc_off { return Err(Error::InvalidLength); }
-                o[pos] = $v;
-                pos += 1;
-            }};
-        }
-
-        match self {
-            Self::Connect {
-                initiator_receive_tunnel,
-                initiator_reset_id,
-                profile: sp,
-                initial_receive_credit,
-                css,
-            } => {
-                sp.validate()?;
-                if sp.unreliable && *initial_receive_credit != 0 {
-                    return Err(Error::ProfileViolation);
-                }
-                u32w!(*initiator_receive_tunnel);
-                u32w!(*initiator_reset_id);
-                u16w!(sp.to_wire()?);
-                u8w!(*initial_receive_credit);
-                let enc = css.encode()?;
-                if pos + enc.len() > crc_off {
-                    return Err(Error::InvalidLength);
-                }
-                o[pos..pos + enc.len()].copy_from_slice(&enc);
-                pos += enc.len();
-            }
-            Self::ConnectAck {
-                initiator_receive_tunnel,
-                responder_receive_tunnel,
-                responder_reset_id,
-                status,
-                initial_receive_credit,
-            } => {
-                u32w!(*initiator_receive_tunnel);
-                u32w!(*responder_receive_tunnel);
-                u32w!(*responder_reset_id);
-                u8w!(*status);
-                u8w!(*initial_receive_credit);
-                u8w!(0);
-            }
-            Self::StreamOpen {
-                tunnel_id,
-                stream_id,
-                profile: sp,
-                initial_receive_credit,
-            } => {
-                sp.validate()?;
-                if sp.unreliable && *initial_receive_credit != 0 {
-                    return Err(Error::ProfileViolation);
-                }
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u16w!(sp.to_wire()?);
-                u8w!(*initial_receive_credit);
-                u8w!(0);
-            }
-            Self::StreamAck {
-                tunnel_id,
-                stream_id,
-                status,
-                initial_receive_credit,
-            } => {
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u8w!(*status);
-                u8w!(*initial_receive_credit);
-                u8w!(0);
-            }
-            Self::Data {
-                tunnel_id,
-                stream_id,
-                sequence,
-                data,
-                end,
-            } => {
-                let p = profile.ok_or(Error::ProfileViolation)?.validate()?;
-                if p.unreliable || (!p.variable && ctx.size_class != p.size_class) {
-                    return Err(Error::ProfileViolation);
-                }
-                if p.variable && (ctx.size_class as u8) > (p.size_class as u8) {
-                    return Err(Error::ProfileViolation);
-                }
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u32w!(*sequence);
-                if p.variable || *end {
-                    u16w!(data.len() as u16);
-                }
-                meta_end = pos;
-                if pos + data.len() > crc_off {
-                    return Err(Error::MessageTooLarge);
-                }
-                o[pos..pos + data.len()].copy_from_slice(data);
-                pos += data.len();
-                if !p.variable && !*end && pos != crc_off {
-                    return Err(Error::InvalidLength);
-                }
-            }
-            Self::Ack {
-                tunnel_id,
-                stream_id,
-                ack_base,
-                receive_bitmap,
-                receive_credit,
-            } => {
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u32w!(*ack_base);
-                u32w!(*receive_bitmap);
-                u8w!(*receive_credit);
-                u8w!(0);
-            }
-            Self::Datagram {
-                tunnel_id,
-                stream_id,
-                sequence,
-                data,
-            } => {
-                let p = profile.ok_or(Error::ProfileViolation)?.validate()?;
-                if !p.unreliable || (!p.variable && ctx.size_class != p.size_class) {
-                    return Err(Error::ProfileViolation);
-                }
-                if p.variable && (ctx.size_class as u8) > (p.size_class as u8) {
-                    return Err(Error::ProfileViolation);
-                }
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                if p.sequenced {
-                    u32w!(sequence.ok_or(Error::ProfileViolation)?);
-                } else if sequence.is_some() {
-                    return Err(Error::ProfileViolation);
-                }
-                if p.variable {
-                    u16w!(data.len() as u16);
-                }
-                meta_end = pos;
-                if pos + data.len() > crc_off {
-                    return Err(Error::MessageTooLarge);
-                }
-                o[pos..pos + data.len()].copy_from_slice(data);
-                pos += data.len();
-                if !p.variable && pos != crc_off {
-                    return Err(Error::InvalidLength);
-                }
-            }
-            Self::StreamClose {
-                tunnel_id,
-                stream_id,
-                final_sequence,
-                ..
-            } => {
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u32w!(*final_sequence);
-            }
-            Self::TunnelClose { tunnel_id, .. } => {
-                u32w!(*tunnel_id);
-            }
-            Self::Reset {
-                tunnel_id,
-                reset_id,
-                reason,
-            } => {
-                u32w!(*tunnel_id);
-                u32w!(*reset_id);
-                u8w!(*reason);
-            }
-            Self::StreamReset {
-                tunnel_id,
-                stream_id,
-                reason,
-                ..
-            } => {
-                u32w!(*tunnel_id);
-                u8w!(*stream_id);
-                u8w!(*reason);
-                u8w!(0);
-            }
-        }
-
-        let unchecked = profile
-            .map(|p| p.unreliable && p.unchecked_payload)
-            .unwrap_or(false)
-            && matches!(self, Self::Datagram { .. });
-        let crc = compute_crc(ctx, &o[..if unchecked { meta_end } else { crc_off }]);
-        o[crc_off..].copy_from_slice(&crc.to_be_bytes());
-        Ok(o)
+        crate::wire::gts_handwritten::encode_packet(self, ctx, profile)
     }
 
     pub fn decode(buf: &[u8], ctx: GtsContext, profile: Option<StreamProfile>) -> Result<Self> {
         if buf.len() != ctx.size_class.bytes() || buf.len() < 5 {
             return Err(Error::InvalidLength);
         }
-        let crc_off = buf.len() - 4;
-        let ty = GtsType::from_wire(buf[0] & 0xf)?;
-        if buf[0] >> 4 != 0 {
-            return Err(Error::Unsupported);
-        }
-        let mut pos = 1;
 
-        macro_rules! u32r {
-            () => {{
-                if pos + 4 > crc_off { return Err(Error::InvalidLength); }
-                let v = u32::from_be_bytes(buf[pos..pos + 4].try_into().unwrap());
-                pos += 4;
-                v
-            }};
-        }
-        macro_rules! u16r {
-            () => {{
-                if pos + 2 > crc_off { return Err(Error::InvalidLength); }
-                let v = u16::from_be_bytes(buf[pos..pos + 2].try_into().unwrap());
-                pos += 2;
-                v
-            }};
-        }
-        macro_rules! u8r {
-            () => {{
-                if pos >= crc_off { return Err(Error::InvalidLength); }
-                let v = buf[pos];
-                pos += 1;
-                v
-            }};
+        #[cfg(feature = "p4-gts-compare")]
+        {
+            use crate::p4_gts::P4GtsLower;
+            use crate::wire::gts_handwritten::HandwrittenGtsLower;
+
+            let handwritten = HandwrittenGtsLower::parse_lower(buf);
+            let p4 = P4GtsLower::parse_lower(buf);
+            if handwritten != p4 {
+                return Err(Error::InvalidField);
+            }
+            return finish_decode(buf, ctx, profile, p4?);
         }
 
-        let mut meta_end = crc_off;
-        let packet = match ty {
-            GtsType::Connect => {
-                let it = u32r!();
-                let rid = u32r!();
-                let sp = StreamProfile::from_wire(u16r!())?;
-                let cr = u8r!();
-                if sp.unreliable && cr != 0 {
-                    return Err(Error::ProfileViolation);
-                }
-                let (css, n) = ServiceSelector::decode(&buf[pos..crc_off])?;
-                pos += n;
-                if buf[pos..crc_off].iter().any(|&b| b != 0) {
-                    return Err(Error::InvalidField);
-                }
-                Self::Connect {
-                    initiator_receive_tunnel: it,
-                    initiator_reset_id: rid,
-                    profile: sp,
-                    initial_receive_credit: cr,
-                    css,
-                }
-            }
-            GtsType::ConnectAck => {
-                let a = u32r!();
-                let b = u32r!();
-                let r = u32r!();
-                let s = u8r!();
-                let c = u8r!();
-                let z = u8r!();
-                if z != 0 {
-                    return Err(Error::InvalidField);
-                }
-                Self::ConnectAck {
-                    initiator_receive_tunnel: a,
-                    responder_receive_tunnel: b,
-                    responder_reset_id: r,
-                    status: s,
-                    initial_receive_credit: c,
-                }
-            }
-            GtsType::StreamOpen => {
-                let t = u32r!();
-                let s = u8r!();
-                let sp = StreamProfile::from_wire(u16r!())?;
-                let c = u8r!();
-                let z = u8r!();
-                if z != 0 || (sp.unreliable && c != 0) {
-                    return Err(Error::ProfileViolation);
-                }
-                Self::StreamOpen {
-                    tunnel_id: t,
-                    stream_id: s,
-                    profile: sp,
-                    initial_receive_credit: c,
-                }
-            }
-            GtsType::StreamAck => {
-                let t = u32r!();
-                let s = u8r!();
-                let st = u8r!();
-                let c = u8r!();
-                let z = u8r!();
-                if z != 0 {
-                    return Err(Error::InvalidField);
-                }
-                Self::StreamAck {
-                    tunnel_id: t,
-                    stream_id: s,
-                    status: st,
-                    initial_receive_credit: c,
-                }
-            }
-            GtsType::Data | GtsType::DataEnd => {
-                let sp = profile.ok_or(Error::ProfileViolation)?.validate()?;
-                if sp.unreliable
-                    || (!sp.variable && ctx.size_class != sp.size_class)
-                    || (sp.variable && (ctx.size_class as u8) > (sp.size_class as u8))
-                {
-                    return Err(Error::ProfileViolation);
-                }
-                let t = u32r!();
-                let s = u8r!();
-                let seq = u32r!();
-                let valid = if sp.variable || ty == GtsType::DataEnd {
-                    Some(u16r!() as usize)
-                } else {
-                    None
-                };
-                meta_end = pos;
-                let n = valid.unwrap_or(crc_off - pos);
-                if pos + n > crc_off {
-                    return Err(Error::InvalidLength);
-                }
-                let data = buf[pos..pos + n].to_vec();
-                if valid.is_some() && buf[pos + n..crc_off].iter().any(|&b| b != 0) {
-                    return Err(Error::InvalidField);
-                }
-                Self::Data {
-                    tunnel_id: t,
-                    stream_id: s,
-                    sequence: seq,
-                    data,
-                    end: ty == GtsType::DataEnd,
-                }
-            }
-            GtsType::Ack => {
-                let t = u32r!();
-                let s = u8r!();
-                let b = u32r!();
-                let bm = u32r!();
-                let c = u8r!();
-                let z = u8r!();
-                if z != 0 {
-                    return Err(Error::InvalidField);
-                }
-                Self::Ack {
-                    tunnel_id: t,
-                    stream_id: s,
-                    ack_base: b,
-                    receive_bitmap: bm,
-                    receive_credit: c,
-                }
-            }
-            GtsType::Datagram => {
-                let sp = profile.ok_or(Error::ProfileViolation)?.validate()?;
-                if !sp.unreliable
-                    || (!sp.variable && ctx.size_class != sp.size_class)
-                    || (sp.variable && (ctx.size_class as u8) > (sp.size_class as u8))
-                {
-                    return Err(Error::ProfileViolation);
-                }
-                let t = u32r!();
-                let s = u8r!();
-                let seq = if sp.sequenced { Some(u32r!()) } else { None };
-                let valid = if sp.variable {
-                    Some(u16r!() as usize)
-                } else {
-                    None
-                };
-                meta_end = pos;
-                let n = valid.unwrap_or(crc_off - pos);
-                if pos + n > crc_off {
-                    return Err(Error::InvalidLength);
-                }
-                let data = buf[pos..pos + n].to_vec();
-                if valid.is_some() && buf[pos + n..crc_off].iter().any(|&b| b != 0) {
-                    return Err(Error::InvalidField);
-                }
-                Self::Datagram {
-                    tunnel_id: t,
-                    stream_id: s,
-                    sequence: seq,
-                    data,
-                }
-            }
-            GtsType::StreamClose | GtsType::StreamCloseAck => {
-                let t = u32r!();
-                let s = u8r!();
-                let f = u32r!();
-                Self::StreamClose {
-                    tunnel_id: t,
-                    stream_id: s,
-                    final_sequence: f,
-                    ack: ty == GtsType::StreamCloseAck,
-                }
-            }
-            GtsType::TunnelClose | GtsType::TunnelCloseAck => {
-                let t = u32r!();
-                Self::TunnelClose {
-                    tunnel_id: t,
-                    ack: ty == GtsType::TunnelCloseAck,
-                }
-            }
-            GtsType::Reset => {
-                let t = u32r!();
-                let r = u32r!();
-                let rs = u8r!();
-                Self::Reset {
-                    tunnel_id: t,
-                    reset_id: r,
-                    reason: rs,
-                }
-            }
-            GtsType::StreamReset | GtsType::StreamResetAck => {
-                let t = u32r!();
-                let s = u8r!();
-                let r = u8r!();
-                let z = u8r!();
-                if z != 0 {
-                    return Err(Error::InvalidField);
-                }
-                Self::StreamReset {
-                    tunnel_id: t,
-                    stream_id: s,
-                    reason: r,
-                    ack: ty == GtsType::StreamResetAck,
-                }
-            }
-            GtsType::Reserved => return Err(Error::Unsupported),
-        };
-
-        let unchecked = profile
-            .map(|sp| sp.unreliable && sp.unchecked_payload)
-            .unwrap_or(false)
-            && ty == GtsType::Datagram;
-        let got = u32::from_be_bytes(buf[crc_off..].try_into().unwrap());
-        let want = compute_crc(ctx, &buf[..if unchecked { meta_end } else { crc_off }]);
-        if got != want {
-            return Err(Error::InvalidCrc);
+        #[cfg(all(feature = "p4-gts", not(feature = "p4-gts-compare")))]
+        {
+            use crate::p4_gts::P4GtsLower;
+            return finish_decode(buf, ctx, profile, P4GtsLower::parse_lower(buf)?);
         }
-        Ok(packet)
+
+        #[cfg(not(feature = "p4-gts"))]
+        {
+            use crate::wire::gts_handwritten::HandwrittenGtsLower;
+            finish_decode(buf, ctx, profile, HandwrittenGtsLower::parse_lower(buf)?)
+        }
+    }
+
+    #[cfg(feature = "p4-gts")]
+    #[doc(hidden)]
+    pub fn decode_handwritten_reference(
+        buf: &[u8],
+        ctx: GtsContext,
+        profile: Option<StreamProfile>,
+    ) -> Result<Self> {
+        use crate::wire::gts_handwritten::HandwrittenGtsLower;
+        if buf.len() != ctx.size_class.bytes() || buf.len() < 5 {
+            return Err(Error::InvalidLength);
+        }
+        finish_decode(buf, ctx, profile, HandwrittenGtsLower::parse_lower(buf)?)
+    }
+
+    #[cfg(feature = "p4-gts")]
+    #[doc(hidden)]
+    pub fn decode_p4_reference(
+        buf: &[u8],
+        ctx: GtsContext,
+        profile: Option<StreamProfile>,
+    ) -> Result<Self> {
+        use crate::p4_gts::P4GtsLower;
+        if buf.len() != ctx.size_class.bytes() || buf.len() < 5 {
+            return Err(Error::InvalidLength);
+        }
+        finish_decode(buf, ctx, profile, P4GtsLower::parse_lower(buf)?)
     }
 }
 
-fn compute_crc(ctx: GtsContext, gts: &[u8]) -> u32 {
+#[cfg(feature = "alloc")]
+fn finish_decode(
+    buf: &[u8],
+    ctx: GtsContext,
+    profile: Option<StreamProfile>,
+    lower: GtsLowerPacket,
+) -> Result<GtsPacket> {
+    let crc_off = buf.len() - 4;
+    let ty = lower.packet_type();
+    let mut meta_end = crc_off;
+
+    let packet = match lower {
+        GtsLowerPacket::Connect {
+            initiator_receive_tunnel,
+            initiator_reset_id,
+            profile: profile_wire,
+            initial_receive_credit,
+        } => {
+            let stream_profile = StreamProfile::from_wire(profile_wire)?;
+            if stream_profile.unreliable && initial_receive_credit != 0 {
+                return Err(Error::ProfileViolation);
+            }
+            let pos = 12;
+            let (css, n) = ServiceSelector::decode(&buf[pos..crc_off])?;
+            if buf[pos + n..crc_off].iter().any(|&b| b != 0) {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::Connect {
+                initiator_receive_tunnel,
+                initiator_reset_id,
+                profile: stream_profile,
+                initial_receive_credit,
+                css,
+            }
+        }
+        GtsLowerPacket::ConnectAck {
+            initiator_receive_tunnel,
+            responder_receive_tunnel,
+            responder_reset_id,
+            status,
+            initial_receive_credit,
+            reserved,
+        } => {
+            if reserved != 0 {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::ConnectAck {
+                initiator_receive_tunnel,
+                responder_receive_tunnel,
+                responder_reset_id,
+                status,
+                initial_receive_credit,
+            }
+        }
+        GtsLowerPacket::StreamOpen {
+            tunnel_id,
+            stream_id,
+            profile: profile_wire,
+            initial_receive_credit,
+            reserved,
+        } => {
+            let stream_profile = StreamProfile::from_wire(profile_wire)?;
+            if reserved != 0 || (stream_profile.unreliable && initial_receive_credit != 0) {
+                return Err(Error::ProfileViolation);
+            }
+            GtsPacket::StreamOpen {
+                tunnel_id,
+                stream_id,
+                profile: stream_profile,
+                initial_receive_credit,
+            }
+        }
+        GtsLowerPacket::StreamAck {
+            tunnel_id,
+            stream_id,
+            status,
+            initial_receive_credit,
+            reserved,
+        } => {
+            if reserved != 0 {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::StreamAck {
+                tunnel_id,
+                stream_id,
+                status,
+                initial_receive_credit,
+            }
+        }
+        GtsLowerPacket::Data {
+            tunnel_id,
+            stream_id,
+            sequence,
+            end,
+            option_probe,
+        } => {
+            let sp = profile.ok_or(Error::ProfileViolation)?.validate()?;
+            if sp.unreliable
+                || (!sp.variable && ctx.size_class != sp.size_class)
+                || (sp.variable && (ctx.size_class as u8) > (sp.size_class as u8))
+            {
+                return Err(Error::ProfileViolation);
+            }
+
+            let (pos, valid) = if end || sp.variable {
+                (12usize, Some(option_probe as usize))
+            } else {
+                (10usize, None)
+            };
+            meta_end = pos;
+            let n = valid.unwrap_or(crc_off - pos);
+            if pos + n > crc_off {
+                return Err(Error::InvalidLength);
+            }
+            let data = buf[pos..pos + n].to_vec();
+            if valid.is_some() && buf[pos + n..crc_off].iter().any(|&b| b != 0) {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::Data {
+                tunnel_id,
+                stream_id,
+                sequence,
+                data,
+                end,
+            }
+        }
+        GtsLowerPacket::Ack {
+            tunnel_id,
+            stream_id,
+            ack_base,
+            receive_bitmap,
+            receive_credit,
+            reserved,
+        } => {
+            if reserved != 0 {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::Ack {
+                tunnel_id,
+                stream_id,
+                ack_base,
+                receive_bitmap,
+                receive_credit,
+            }
+        }
+        GtsLowerPacket::Datagram {
+            tunnel_id,
+            stream_id,
+            option_probe,
+        } => {
+            let sp = profile.ok_or(Error::ProfileViolation)?.validate()?;
+            if !sp.unreliable
+                || (!sp.variable && ctx.size_class != sp.size_class)
+                || (sp.variable && (ctx.size_class as u8) > (sp.size_class as u8))
+            {
+                return Err(Error::ProfileViolation);
+            }
+
+            let mut option_pos = 0usize;
+            let sequence = if sp.sequenced {
+                let value = u32::from_be_bytes([
+                    option_probe[0],
+                    option_probe[1],
+                    option_probe[2],
+                    option_probe[3],
+                ]);
+                option_pos = 4;
+                Some(value)
+            } else {
+                None
+            };
+            let valid = if sp.variable {
+                let value = u16::from_be_bytes([
+                    option_probe[option_pos],
+                    option_probe[option_pos + 1],
+                ]) as usize;
+                option_pos += 2;
+                Some(value)
+            } else {
+                None
+            };
+            let pos = 6 + option_pos;
+            meta_end = pos;
+            let n = valid.unwrap_or(crc_off - pos);
+            if pos + n > crc_off {
+                return Err(Error::InvalidLength);
+            }
+            let data = buf[pos..pos + n].to_vec();
+            if valid.is_some() && buf[pos + n..crc_off].iter().any(|&b| b != 0) {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::Datagram {
+                tunnel_id,
+                stream_id,
+                sequence,
+                data,
+            }
+        }
+        GtsLowerPacket::StreamClose {
+            tunnel_id,
+            stream_id,
+            final_sequence,
+            ack,
+        } => GtsPacket::StreamClose {
+            tunnel_id,
+            stream_id,
+            final_sequence,
+            ack,
+        },
+        GtsLowerPacket::TunnelClose { tunnel_id, ack } => {
+            GtsPacket::TunnelClose { tunnel_id, ack }
+        }
+        GtsLowerPacket::Reset {
+            tunnel_id,
+            reset_id,
+            reason,
+        } => GtsPacket::Reset {
+            tunnel_id,
+            reset_id,
+            reason,
+        },
+        GtsLowerPacket::StreamReset {
+            tunnel_id,
+            stream_id,
+            reason,
+            reserved,
+            ack,
+        } => {
+            if reserved != 0 {
+                return Err(Error::InvalidField);
+            }
+            GtsPacket::StreamReset {
+                tunnel_id,
+                stream_id,
+                reason,
+                ack,
+            }
+        }
+    };
+
+    let unchecked = profile
+        .map(|sp| sp.unreliable && sp.unchecked_payload)
+        .unwrap_or(false)
+        && ty == GtsType::Datagram;
+    let got = u32::from_be_bytes(
+        buf[crc_off..]
+            .try_into()
+            .map_err(|_| Error::InvalidLength)?,
+    );
+    let want = compute_crc(ctx, &buf[..if unchecked { meta_end } else { crc_off }]);
+    if got != want {
+        return Err(Error::InvalidCrc);
+    }
+
+    Ok(packet)
+}
+
+pub(crate) fn compute_crc(ctx: GtsContext, gts: &[u8]) -> u32 {
     let mut c = Crc32::new();
     c.update_bits((ctx.gdp_version & 3) as u64, 2);
     c.update_bits(0x2, 4);

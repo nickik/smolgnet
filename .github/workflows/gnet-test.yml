@@ -2,7 +2,7 @@ name: GNet point-to-point
 
 on:
   push:
-    branches: [main, gnet-point-to-point, heapless-storage-socketset-v2, p4-gdp-main-integration]
+    branches: [main, gnet-point-to-point, heapless-storage-socketset-v2, p4-gdp-main-integration, p4-gts-hybrid]
   pull_request:
   workflow_dispatch:
 
@@ -12,12 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test GNet stack with handwritten GDP
-        run: cargo test --all-targets
-      - name: Test GNet stack with x4c P4 GDP
-        run: cargo test --all-targets --features p4-gdp
-      - name: Differential-test P4 GDP against handwritten GDP
-        run: cargo test --all-targets --features p4-gdp-compare
+
+      # Required compatibility gate: every higher-level test under all four
+      # production GDP/GTS backend combinations plus crossed compare modes.
+      - name: Validate complete GDP/GTS backend matrix
+        run: bash scripts/test-backend-matrix.sh
+
       - name: Run standalone P4 GDP conformance suite
         run: cargo test --manifest-path p4-gdp/Cargo.toml --all-targets
       - name: Test async/waker support
@@ -26,5 +26,15 @@ jobs:
         run: cargo test --no-default-features --test heapless_api
       - name: Check no-std without alloc
         run: cargo check --no-default-features
-      - name: Compare 1 MiB smolgnet and smoltcp loopback
-        run: cargo test --release --test performance -- --ignored --nocapture
+
+      - name: Microbenchmark handwritten vs P4 GTS RX and TX wire backends
+        run: GDP_BACKEND=handwritten GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test gts_performance -- --ignored --nocapture
+
+      - name: Throughput handwritten GDP + handwritten GTS
+        run: GDP_BACKEND=handwritten GTS_BACKEND=handwritten bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
+      - name: Throughput P4 GDP + handwritten GTS
+        run: GDP_BACKEND=p4 GTS_BACKEND=handwritten bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
+      - name: Throughput handwritten GDP + P4 GTS
+        run: GDP_BACKEND=handwritten GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
+      - name: Throughput P4 GDP + P4 GTS
+        run: GDP_BACKEND=p4 GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture

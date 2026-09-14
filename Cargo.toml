@@ -16,12 +16,21 @@ default = ["std", "alloc"]
 std = ["alloc"]
 alloc = []
 async = []
-# Use the x4c-generated P4 parser for normal GDP header decoding. The pinned
-# p4rs runtime is currently std-only; no_std support is tracked separately.
-p4-gdp = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
+# Shared hosted runtime required by the pinned x4c Rust backend. This is kept
+# separate so GDP and GTS can independently select P4 without duplicating deps.
+p4-runtime = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
+# Use the x4c-generated P4 parser for normal GDP header decoding.
+p4-gdp = ["p4-runtime"]
 # Select the P4 backend and additionally decode every supported GDP header with
 # the handwritten implementation, failing if the two interpretations differ.
 p4-gdp-compare = ["p4-gdp"]
+# Use the x4c-generated lower GTS wire codec for receive parsing and transmit
+# deparsing. Stream-profile interpretation, payload rules, CRC and all
+# transport/session state remain in common Rust code.
+p4-gts = ["p4-runtime"]
+# Run every GTS packet through both lower wire codecs and reject any RX or TX
+# difference before/after the common GTS semantic layers.
+p4-gts-compare = ["p4-gts"]
 
 [dependencies]
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
@@ -93,3 +102,18 @@ required-features = ["alloc"]
 name = "p4_performance"
 path = "tests/p4_performance.rs"
 required-features = ["p4-gdp"]
+
+[[test]]
+name = "p4_gts_conformance"
+path = "tests/p4_gts_conformance.rs"
+required-features = ["p4-gts"]
+
+[[test]]
+name = "p4_gts_tx_conformance"
+path = "tests/p4_gts_tx_conformance.rs"
+required-features = ["p4-gts"]
+
+[[test]]
+name = "gts_performance"
+path = "tests/gts_performance.rs"
+required-features = ["p4-gts"]
