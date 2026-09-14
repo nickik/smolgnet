@@ -9,6 +9,7 @@ struct egress_metadata_t {
     bit<16> port;
     bool drop;
     bool broadcast;
+    bool transit;
 }
 
 header gdp_base_h {
@@ -74,11 +75,68 @@ control ingress(
     inout ingress_metadata_t ingress,
     inout egress_metadata_t egress,
 ) {
+    action drop() {
+        egress.drop = true;
+    }
+
+    /* Local delivery does not consume a routing hop. */
+    action deliver_local(bit<16> port) {
+        egress.port = port;
+        egress.transit = false;
+    }
+
+    /* Transit forwarding is followed by common hop-limit processing. */
+    action forward(bit<16> port) {
+        egress.port = port;
+        egress.transit = true;
+    }
+
+    table global_routes {
+        key = {
+            hdr.global_addr.destination_hi: exact;
+            hdr.global_addr.destination_lo: exact;
+        }
+        actions = {
+            drop;
+            deliver_local;
+            forward;
+        }
+        default_action = drop;
+        size = 1024;
+    }
+
+    table local_routes {
+        key = {
+            hdr.local_addr.destination: exact;
+        }
+        actions = {
+            drop;
+            deliver_local;
+            forward;
+        }
+        default_action = drop;
+        size = 1024;
+    }
+
     apply {
-        // Phase 0/1 behavior is intentionally transparent. Forwarding,
-        // hop-limit mutation, CRC validation, and route tables are added only
-        // after parser/deparser conformance with smolgnet is established.
-        egress.port = ingress.port;
+        if (hdr.global_addr.isValid()) {
+            global_routes.apply();
+        } else {
+            local_routes.apply();
+        }
+
+        /*
+         * GDP CRC-8 deliberately excludes hop limit, so a router can update
+         * hop without recalculating the CRC. Only transit packets consume a
+         * hop. A transit packet with hop 0 or 1 expires at this router.
+         */
+        if (egress.transit) {
+            if (hdr.base.hop <= 8w1) {
+                egress.drop = true;
+            } else {
+                hdr.base.hop = hdr.base.hop - 8w1;
+            }
+        }
     }
 }
 
