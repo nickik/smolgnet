@@ -36,8 +36,6 @@ The current implementation is the point-to-point endpoint baseline. Routing, GC3
 - deterministic loss/corruption fault tests
 - 1 MiB release-mode throughput comparison against stock smoltcp 0.14 TCP loopback
 - `no_std` + `alloc` build
-- deterministic in-memory direct-link harness for endpoint tests
-- paired native `VirtualNic` devices carrying `GnetFrame` directly with no IP/Ethernet/TUN/TAP layer
 
 ## Endpoint construction
 
@@ -101,34 +99,6 @@ assert_eq!(server.recv(server_tunnel, 0)?, Some(b"hello".to_vec()));
 link.pump(&mut client, &mut server, 11, 100_000)?;
 # Ok::<(), smolgnet::Error>(())
 ```
-
-## Native virtual NIC testing
-
-For device-style integration tests, use a pair of `VirtualNic`s. They exchange the normal host-facing `GnetFrame` representation directly:
-
-```text
-Endpoint A -> VirtualNic A ===== VirtualNic B -> Endpoint B
-```
-
-There is no Ethernet envelope, IP packet, MAC address, TUN interface, TAP interface, or kernel network stack in this path.
-
-```rust
-use smolgnet::*;
-
-let (mut nic_a, mut nic_b) = VirtualNic::pair(16)?;
-
-let frame = GnetFrame {
-    vcid: Vcid::VC1,
-    traffic: LinkTraffic::Data,
-    bytes: vec![1, 2, 3, 4],
-};
-
-nic_a.transmit_frame(frame.clone())?;
-assert_eq!(nic_b.receive_frame()?, Some(frame));
-# Ok::<(), smolgnet::Error>(())
-```
-
-`VirtualNicLink` drives two complete `Endpoint`s through these paired devices and is the intended basis for future multi-interface routing tests. If separate Unix processes are later useful, another `GnetFrameDevice` backend can carry the same frames over Unix-domain IPC without changing GNet protocol semantics.
 
 ## Address bootstrap example
 
@@ -204,11 +174,22 @@ The unreliable test applies the same kind of faults to a sequenced DATAGRAM stre
 
 Literal loss of native DLP flits is intentionally a separate problem: losing physical flits also loses the receiver-credit consumption event and interacts with DLP resynchronization/recovery. The GTS fault test therefore isolates transport reliability from that lower-layer recovery problem.
 
+## Test-only virtual devices
+
+The production library exposes the native QDX/GNet device traits. Host-only transports do not belong in `src/`.
+
+Test helpers live under `tests/support`:
+
+- an in-process bounded virtual NIC pair carrying `GnetFrame` directly;
+- an AF_UNIX `SOCK_SEQPACKET` NIC used by `tests/process_link.rs` to run two independent smolgnet processes while preserving one native GNet/QDX frame per IPC record.
+
+These helpers use no IP, Ethernet, TUN, TAP, or MAC addressing. The small seqpacket record wrapper is only host-test metadata and is not a GNet protocol format. `libc` is a dev-dependency only.
+
 ## Performance comparison
 
 `tests/performance.rs` transfers the same deterministic 1 MiB payload through:
 
-1. smolgnet reliable GTS over GDP/DLP and the in-memory `DirectLink`;
+1. smolgnet reliable GTS over GDP/DLP and the in-memory test paths;
 2. stock smoltcp 0.14 TCP over its in-memory Ethernet `Loopback` device.
 
 This is intended as a library CPU-cost comparison rather than a physical-network benchmark. It excludes connection establishment from the timed section and verifies the complete payload at the receiver.
@@ -221,7 +202,7 @@ cargo test --release --test performance -- --ignored --nocapture
 
 CI also runs this comparison and prints the observed MiB/s, Gbit/s, elapsed time, and smolgnet/smoltcp ratio. Performance is not a pass/fail gate because shared-runner timing varies.
 
-The upstream smoltcp project also has host TUN/TAP benchmarks, but smolgnet does not use those as its GNet test transport because they imply IP- or Ethernet-shaped kernel interfaces. Native `VirtualNic` testing is the corresponding smolgnet device-level path.
+TUN/TAP are deliberately not used for GNet integration testing: TUN is IP-oriented and TAP is Ethernet-oriented. Process-separated GNet tests use Unix `SOCK_SEQPACKET` only as local host IPC around native `GnetFrame` records.
 
 ## Tests
 
@@ -231,9 +212,9 @@ cargo check --no-default-features
 cargo test --release --test performance -- --ignored --nocapture
 ```
 
-The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, native virtual-NIC frame transfer, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, deterministic loss/corruption, and comparative throughput.
+The test suite covers wire encoding, Local and Global GDP, DLP buffer/credit invariants, VC2/VC4 transparency, GCTL discovery/address assignment, reliable/unreliable GTS, fixed and variable stream validation, ACK/receive-credit behavior, retransmission, stream reset, tunnel reset, graceful close, deterministic loss/corruption, native-frame process separation, and comparative throughput.
 
-`docs/TEST_CONCEPTS.md` documents the broader test strategy. `docs/ROUTING_TODO.md` defines the future routing work. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
+`docs/TEST_CONCEPTS.md` documents the broader test strategy. `docs/ROUTING_TODO.md` records the next routing work. `AI_CONTEXT.md` records the architectural rules for future AI-assisted development.
 
 ## Specification status caveats
 

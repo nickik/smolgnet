@@ -54,9 +54,7 @@ pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
 #[cfg(feature = "alloc")]
 pub use link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
 #[cfg(feature = "alloc")]
-pub use qdx::{
-    GnetFlitDevice, GnetFrameDevice, QdxDirectLink, VirtualNic, VirtualNicLink,
-};
+pub use qdx::{GnetFlitDevice, GnetFrameDevice};
 #[cfg(feature = "alloc")]
 pub use runtime::EndpointRuntimeExt;
 #[cfg(all(feature = "alloc", feature = "async"))]

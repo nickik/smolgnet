@@ -1,5 +1,9 @@
+#[path = "support/qdx.rs"]
+mod qdx_support;
+
 use std::time::{Duration, Instant as StdInstant};
 
+use qdx_support::QdxDirectLink;
 use smolgnet::*;
 use smoltcp::iface::{Config as SmolConfig, Interface as SmolInterface, SocketSet};
 use smoltcp::phy::{Loopback, Medium};
