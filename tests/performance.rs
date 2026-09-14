@@ -2,7 +2,7 @@ use std::time::{Duration, Instant as StdInstant};
 
 use smolgnet::*;
 use smoltcp::iface::{Config as SmolConfig, Interface as SmolInterface, SocketSet};
-use smoltcp::phy::{Device, Loopback, Medium};
+use smoltcp::phy::{Loopback, Medium};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant as SmolInstant;
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
@@ -37,7 +37,41 @@ impl ResultRow {
     }
 }
 
-fn run_smolgnet(payload: &[u8]) -> ResultRow {
+trait TestLink {
+    fn pump(
+        &mut self,
+        a: &mut Endpoint,
+        b: &mut Endpoint,
+        now: u64,
+        max_flits: usize,
+    ) -> Result<usize>;
+}
+
+impl TestLink for DirectLink {
+    fn pump(
+        &mut self,
+        a: &mut Endpoint,
+        b: &mut Endpoint,
+        now: u64,
+        max_flits: usize,
+    ) -> Result<usize> {
+        DirectLink::pump(self, a, b, now, max_flits)
+    }
+}
+
+impl TestLink for BurstDirectLink {
+    fn pump(
+        &mut self,
+        a: &mut Endpoint,
+        b: &mut Endpoint,
+        now: u64,
+        max_flits: usize,
+    ) -> Result<usize> {
+        BurstDirectLink::pump(self, a, b, now, max_flits)
+    }
+}
+
+fn run_smolgnet<L: TestLink>(payload: &[u8], mut link: L) -> ResultRow {
     let mut cfg = EndpointConfig::new(400_000);
     cfg.gts_receive_slots = 255;
     cfg.credit_update_threshold = 64;
@@ -48,7 +82,6 @@ fn run_smolgnet(payload: &[u8]) -> ResultRow {
     server.listen(css, ListenerConfig { receive_slots: 255 });
     let profile = StreamProfile::reliable_variable(SizeClass::Bulk1280, Direction::Bidirectional);
     let client_tunnel = client.connect(server.address(), css, profile).unwrap();
-    let mut link = DirectLink::new();
     link.pump(&mut client, &mut server, 0, 2_000_000).unwrap();
     let server_tunnel = server.accept().unwrap();
 
@@ -185,37 +218,51 @@ fn run_smoltcp(payload: &[u8]) -> ResultRow {
 fn compare_one_mib_smolgnet_and_smoltcp_loopback() {
     let payload = random_bytes(ONE_MIB, 0x5eed_cafe_1234_5678);
 
-    // Warm up both implementations once so allocator/code-page startup has
-    // less influence on the measured pass.
+    // Warm up all paths once so allocator/code-page startup has less influence
+    // on the measured pass.
     let warm = &payload[..64 * 1024];
-    let _ = run_smolgnet(warm);
+    let _ = run_smolgnet(warm, DirectLink::new());
+    let _ = run_smolgnet(warm, BurstDirectLink::new());
     let _ = run_smoltcp(warm);
 
-    let gnet = run_smolgnet(&payload);
+    let legacy = run_smolgnet(&payload, DirectLink::new());
+    let burst = run_smolgnet(&payload, BurstDirectLink::new());
     let tcp = run_smoltcp(&payload);
 
     println!("1 MiB in-memory established-stream transfer");
     println!(
-        "smolgnet GTS/GDP/DLP: {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} flits",
-        gnet.mib_per_sec(),
-        gnet.gbps(),
-        gnet.elapsed,
-        gnet.logical_units
+        "smolgnet legacy flits:  {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} flits",
+        legacy.mib_per_sec(),
+        legacy.gbps(),
+        legacy.elapsed,
+        legacy.logical_units
     );
     println!(
-        "smoltcp TCP loopback: {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} poll rounds",
+        "smolgnet burst DLP:     {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} flits",
+        burst.mib_per_sec(),
+        burst.gbps(),
+        burst.elapsed,
+        burst.logical_units
+    );
+    println!(
+        "smoltcp TCP loopback:   {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} poll rounds",
         tcp.mib_per_sec(),
         tcp.gbps(),
         tcp.elapsed,
         tcp.logical_units
     );
     println!(
-        "smolgnet/smoltcp throughput ratio: {:.3}",
-        gnet.mib_per_sec() / tcp.mib_per_sec()
+        "burst/legacy smolgnet speedup: {:.3}x",
+        burst.mib_per_sec() / legacy.mib_per_sec()
+    );
+    println!(
+        "burst smolgnet/smoltcp throughput ratio: {:.3}",
+        burst.mib_per_sec() / tcp.mib_per_sec()
     );
 
     // Performance varies by runner, so correctness is the hard assertion.
-    // The printed ratio is tracked as a benchmark observation, not a CI gate.
-    assert_eq!(gnet.bytes, ONE_MIB);
+    // The printed ratios are tracked as benchmark observations, not CI gates.
+    assert_eq!(legacy.bytes, ONE_MIB);
+    assert_eq!(burst.bytes, ONE_MIB);
     assert_eq!(tcp.bytes, ONE_MIB);
 }
