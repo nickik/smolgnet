@@ -45,6 +45,10 @@ fn real_linux_tap_roundtrip() {
     let mut a = TapDevice::open(&tap_a, addr_a).expect("open first TAP");
     let mut b = TapDevice::open(&tap_b, addr_b).expect("open second TAP");
 
+    // Opening the TAP file descriptors raises carrier on the persistent TAP
+    // devices. Give the bridge a moment to observe the carrier transition.
+    thread::sleep(Duration::from_millis(50));
+
     let data = GnetFrame {
         vcid: Vcid::VC2,
         traffic: LinkTraffic::Data,
