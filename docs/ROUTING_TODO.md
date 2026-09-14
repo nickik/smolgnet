@@ -2,13 +2,11 @@
 
 This document defines the intentionally small routing support for `smolgnet`.
 
-The goal is **not** to turn `smolgnet` into the GNet router implementation. For now, routing should stay close to smoltcp's model: a small bounded table used by endpoints or simple test setups to choose a next-hop router for a destination.
+The goal is **not** to turn `smolgnet` into the GNet router implementation. Routing stays close to smoltcp's model: a small bounded table used by endpoints or simple test setups to choose a next-hop router for a destination.
 
 A future dedicated router implementation / routing daemon can build a richer RIB/FIB, multiple-interface forwarding, dynamic routing, policy, metrics, and hardware programming outside `smolgnet`.
 
 ## Scope for the current milestone
-
-Keep only:
 
 ```text
 GDP destination
@@ -34,8 +32,6 @@ No multi-interface forwarding engine is required here.
 - [x] Unit tests for canonicalization and matching.
 
 ## 2. Minimal Route type
-
-Match smoltcp's useful route fields as closely as practical:
 
 ```text
 Route
@@ -66,8 +62,6 @@ Route
 - [x] Add route removal by destination prefix.
 - [x] Add explicit expired-route pruning.
 
-This is intentionally simpler than an alloc-backed RIB. If a future router needs large/dynamic tables, that should live in router-specific code rather than making the core endpoint route table complicated.
-
 ## 4. Lookup behavior
 
 - [x] Ignore expired routes.
@@ -79,11 +73,9 @@ This is intentionally simpler than an alloc-backed RIB. If a future router needs
 - [x] Unit tests for longest-prefix lookup.
 - [x] Unit tests for expiry fallback.
 
-Do not add administrative distance, route origin, metrics, ECMP, policy routing, or per-interface selection to this table yet.
+Do not add administrative distance, route origin, metrics, ECMP, policy routing, or per-interface selection to this table.
 
 ## 5. Default-route helpers
-
-Equivalent to smoltcp's default-gateway convenience API:
 
 - [x] Add default route.
 - [x] Return the previous default route when replacing it.
@@ -94,50 +86,77 @@ Equivalent to smoltcp's default-gateway convenience API:
 ## 6. Endpoint integration
 
 - [x] Give `Endpoint` a small fixed-capacity route table.
-- [x] Preserve direct point-to-point behavior when the route table is empty.
+- [x] Preserve legacy point-to-point direct behavior when the route table is empty.
+- [x] Once a route is configured, make the route table authoritative.
 - [x] Allow an endpoint to configure a default router through `routes_mut()`.
 - [x] Allow an endpoint to add a more-specific static prefix route.
-- [x] Add endpoint-level next-hop lookup with `Endpoint::route(destination, now)`.
+- [x] Add configured-route lookup with `Endpoint::route(destination, now)`.
+- [x] Add final next-hop selection with `Endpoint::next_hop(destination, now)`.
+- [x] Add `Error::NoRoute` for an authoritative table with no match.
 - [x] Keep route lookup outside GTS semantics.
-- [x] Test more-specific route overriding default.
-- [x] Test empty/no-route behavior.
-- [ ] Integrate route selection into packet TX once direct/on-link destination semantics are explicitly defined.
-- [ ] Keep the packet's GDP destination unchanged when TX starts using a selected next hop.
-- [ ] Add an endpoint-level expiry fallback test.
+- [x] Keep the packet's GDP destination unchanged; route selection only authorizes/selects the adjacent peer.
+- [x] Add explicit-time route-aware send helpers:
+  - [x] `connect_at(...)`
+  - [x] `send_gctl_at(...)`
+  - [x] `send_echo_at(...)`
+- [x] Endpoint tests for:
+  - [x] direct send with no routing involved;
+  - [x] default-router selection;
+  - [x] more-specific route overriding default;
+  - [x] expired specific route falling back to default;
+  - [x] no route available.
 
-The current route API is intentionally advisory: `Endpoint::route()` returns a configured next-hop router, while ordinary point-to-point transmission remains unchanged. This avoids inventing an on-link-prefix rule just to force route lookup into TX.
+### Direct versus routed rule
+
+Keep the rule deliberately simple and avoid inventing interface/connected-route semantics:
+
+```text
+route table empty
+    -> legacy point-to-point mode
+    -> destination itself is the next hop
+
+route table non-empty
+    -> routing enabled
+    -> table is authoritative
+    -> longest-prefix route selects next hop
+    -> no match means Error::NoRoute
+```
+
+If a destination should be considered directly reachable while routing is enabled, install a `/64` route with `via_router` equal to that destination.
+
+Because current DLP is point-to-point, there is no additional link-layer next-hop field. The selected next hop identifies the adjacent peer logically; the encoded GDP destination always remains the final destination.
 
 ## 7. Route-table mutation API
 
-Keep this small and endpoint-oriented.
-
 - [x] Expose direct immutable/mutable access with `routes()` / `routes_mut()`.
-- [ ] Decide whether a smoltcp-style `update` closure adds enough value beyond direct bounded-table access.
-- [ ] If useful, add a controlled `update` closure API without allocation.
-- [ ] Add tests ensuring mutation cannot corrupt `len` bookkeeping.
+- [ ] Add a smoltcp-style `update` closure only if a real caller benefits from it.
 
-Do not add a large route-management API until a real user requires it.
+Direct bounded-table access is sufficient for the current milestone.
 
 ## 8. Timing integration
 
-- [ ] Decide whether route expiry needs to participate in endpoint `poll_at` / `poll_delay`.
-- [ ] If not, document that expired routes are lazily ignored and optionally pruned by callers.
-- [ ] If yes, schedule only the earliest route expiry; do not add a general routing timer subsystem.
+- [x] Route expiry participates in endpoint `poll_at` / `poll_delay`.
+- [x] `RouteTable::next_expiry()` reports the earliest finite expiry.
+- [x] An earlier route expiry preempts the conservative GTS retransmission timer.
+- [x] `tick_at` prunes expired routes.
+- [x] Route pruning counts as endpoint work so async runtimes can wake transmitters after routing changes.
+- [x] Tests cover route-expiry scheduling and pruning.
+
+No separate routing timer subsystem is introduced.
 
 ## 9. Higher-level routed tests
 
-Only add enough test infrastructure to verify that normal endpoint traffic can use a configured next-hop.
+The minimal endpoint routing milestone does not require a production forwarding implementation inside `smolgnet`.
+
+Deferred until a separate forwarding component exists:
 
 - [ ] Two endpoints with a simple forwarding test helper between them.
-- [ ] Verify GDP destination identity is preserved while next-hop selection changes.
-- [ ] Verify ordinary GTS traffic is unaffected by endpoint route lookup.
-- [ ] Verify a GTS request/response can traverse a simple routed test topology once forwarding support exists elsewhere.
+- [ ] Verify a complete GDP packet traverses that helper while preserving destination identity.
+- [ ] Verify a GTS request/response traverses the helper unchanged.
 
-The forwarding helper may remain test-only. It is not evidence that `smolgnet` should grow into the production router implementation.
+These belong with the future router/forwarding implementation, not in the endpoint route-table core.
 
 ## Explicitly deferred / out of scope
-
-The following belong in a future dedicated router/control-plane implementation unless a very small compatibility hook is required in `smolgnet`:
 
 - multi-interface router object;
 - interface handles in the route table;
@@ -165,7 +184,7 @@ The following belong in a future dedicated router/control-plane implementation u
 
 ## Current status
 
-The minimal smoltcp-like routing primitives exist in `src/routing.rs`, and `Endpoint` now owns a small route table:
+The minimal smoltcp-like routing milestone is complete in `smolgnet`:
 
 ```text
 GdpPrefix
@@ -175,6 +194,9 @@ RouteTableFull
 Endpoint::routes()
 Endpoint::routes_mut()
 Endpoint::route()
+Endpoint::next_hop()
+Endpoint::{connect_at,send_gctl_at,send_echo_at}
+route-expiry poll_at integration
 ```
 
-The next routing-specific step is to define **on-link/direct-destination semantics** before allowing transmit paths to automatically substitute a configured next hop.
+Further routing work should happen in a dedicated forwarding/router component unless a concrete endpoint use case requires another small compatibility hook.
