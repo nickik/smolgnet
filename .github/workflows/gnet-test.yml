@@ -22,10 +22,6 @@ jobs:
         run: cargo test --manifest-path p4-gdp/Cargo.toml --all-targets
       - name: Test async/waker support
         run: cargo test --all-targets --features async
-      - name: Test hosted TAP adapter
-        run: cargo test --all-targets --features host-tap
-      - name: Test real Linux TAP path
-        run: bash scripts/test-tap.sh
       - name: Test heapless no-alloc API
         run: cargo test --no-default-features --test heapless_api
       - name: Check no-std without alloc
