@@ -1,8 +1,28 @@
 use p4_gdp::{GdpPipeline, RouteDisposition};
 use smolgnet::{
-    DirectLink, Direction, Endpoint, EndpointConfig, Error, GdpAddress, GnetFrame, LinkTraffic,
+    Direction, Endpoint, EndpointConfig, Error, GdpAddress, GnetFrame, LinkTraffic,
     ListenerConfig, ServiceSelector, SizeClass, StreamProfile,
 };
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LinkSetup {
+    attached: bool,
+}
+
+impl LinkSetup {
+    fn attach(&mut self, a: &mut Endpoint, b: &mut Endpoint) {
+        if self.attached {
+            return;
+        }
+        let a_control = a.dlp().control_window_flits();
+        let b_control = b.dlp().control_window_flits();
+        let a_peer = a.link_local_address();
+        let b_peer = b.link_local_address();
+        a.link_attached(b_peer, b_control).unwrap();
+        b.link_attached(a_peer, a_control).unwrap();
+        self.attached = true;
+    }
+}
 
 fn forward_one(
     pipeline: &mut GdpPipeline,
@@ -18,14 +38,14 @@ fn forward_one(
 }
 
 fn pump_p4(
-    setup_link: &mut DirectLink,
+    setup_link: &mut LinkSetup,
     pipeline: &mut GdpPipeline,
     a: &mut Endpoint,
     b: &mut Endpoint,
     now: u64,
     max_flits: usize,
 ) -> usize {
-    setup_link.attach(a, b).unwrap();
+    setup_link.attach(a, b);
     let mut moved = 0usize;
 
     loop {
@@ -87,7 +107,7 @@ fn smolgnet_gctl_and_gts_run_through_p4_forwarding() {
 
     let mut pipeline = GdpPipeline::new(2);
     add_endpoint_global_routes(&mut pipeline, &a, &b);
-    let mut setup_link = DirectLink::new();
+    let mut setup_link = LinkSetup::default();
 
     // Link credit bootstrapping itself traverses P4.
     pump_p4(&mut setup_link, &mut pipeline, &mut a, &mut b, 0, 100_000);
@@ -133,7 +153,7 @@ fn smolgnet_local_gdp_runs_through_p4_local_route_table() {
     pipeline.add_local_route(1, 0, RouteDisposition::Forward);
     pipeline.add_local_route(2, 1, RouteDisposition::Forward);
 
-    let mut setup_link = DirectLink::new();
+    let mut setup_link = LinkSetup::default();
     pump_p4(&mut setup_link, &mut pipeline, &mut a, &mut b, 0, 100_000);
 
     a.send_echo(b.address(), 0x55, b"local-p4", SizeClass::Ctrl32)

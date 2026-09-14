@@ -1,5 +1,5 @@
+use crate::dlp::{Flit, GnetFrame};
 use crate::error::Result;
-use crate::link::{Flit, GnetFrame};
 
 /// CPU-facing device level used by QDX-GNET-style interfaces.
 ///

@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+#[path = "support/direct.rs"]
+mod direct_support;
 #[path = "support/seqpacket.rs"]
 mod seqpacket_support;
 
@@ -9,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration as StdDuration;
 
+use direct_support::DirectLink;
 use seqpacket_support::SeqPacketNic;
 use smolgnet::*;
 
@@ -76,10 +79,6 @@ fn child_main(fd: RawFd) {
 
         nic.drive_endpoint(&mut server, now).unwrap();
 
-        // Do not tear the host IPC transport down immediately after queueing
-        // the reply. Give the parent time to consume it and return the final
-        // ACK/control bookkeeping, just as a real NIC remains present after a
-        // single exchange completes.
         if let Some(sent_at) = reply_queued_at {
             if server.dlp().queued_data_flits() == 0 && now.saturating_sub(sent_at) >= 100 {
                 return;

@@ -65,22 +65,22 @@ required-features = ["alloc"]
 
 [[test]]
 name = "endpoint"
-path = "tests/endpoint.rs"
+path = "tests/wrappers/endpoint.rs"
 required-features = ["alloc"]
 
 [[test]]
 name = "behavior"
-path = "tests/behavior.rs"
+path = "tests/wrappers/behavior.rs"
 required-features = ["alloc"]
 
 [[test]]
 name = "gts_profile_matrix"
-path = "tests/gts_profile_matrix.rs"
+path = "tests/wrappers/gts_profile_matrix.rs"
 required-features = ["alloc"]
 
 [[test]]
 name = "faults"
-path = "tests/faults.rs"
+path = "tests/wrappers/faults.rs"
 required-features = ["alloc"]
 
 [[test]]
@@ -95,7 +95,7 @@ required-features = ["std", "alloc"]
 
 [[test]]
 name = "performance"
-path = "tests/performance.rs"
+path = "tests/wrappers/performance.rs"
 required-features = ["alloc"]
 
 [[test]]
