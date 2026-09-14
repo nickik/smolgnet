@@ -17,9 +17,21 @@ std = ["alloc"]
 alloc = []
 async = []
 host-tap = ["std", "dep:libc"]
+# Use the x4c-generated P4 parser for normal GDP header decoding. The pinned
+# p4rs runtime is currently std-only; no_std support is tracked separately.
+p4-gdp = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
+# Select the P4 backend and additionally decode every supported GDP header with
+# the handwritten implementation, failing if the two interpretations differ.
+p4-gdp-compare = ["p4-gdp"]
 
 [dependencies]
 libc = { version = "0.2", optional = true }
+p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
+p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
+bitvec = { version = "1.0", optional = true }
+colored = { version = "3", optional = true }
+num = { version = "0.4", features = ["serde"], optional = true }
+usdt = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
@@ -67,3 +79,8 @@ required-features = ["alloc"]
 name = "performance"
 path = "tests/performance.rs"
 required-features = ["alloc"]
+
+[[test]]
+name = "p4_performance"
+path = "tests/p4_performance.rs"
+required-features = ["p4-gdp"]
