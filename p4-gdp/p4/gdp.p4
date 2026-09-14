@@ -131,10 +131,14 @@ control ingress(
          * hop. A transit packet with hop 0 or 1 expires at this router.
          */
         if (egress.transit) {
-            if (hdr.base.hop <= 8w1) {
+            if (hdr.base.hop == 8w0) {
                 egress.drop = true;
             } else {
-                hdr.base.hop = hdr.base.hop - 8w1;
+                if (hdr.base.hop == 8w1) {
+                    egress.drop = true;
+                } else {
+                    hdr.base.hop = hdr.base.hop - 8w1;
+                }
             }
         }
     }
