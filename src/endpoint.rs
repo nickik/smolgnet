@@ -5,7 +5,7 @@ use crate::routing::RouteTable;
 use crate::time::Instant;
 use crate::wire::css::ServiceSelector;
 use crate::wire::gctl::GctlMessage;
-use crate::wire::gdp::{GdpAddress, SizeClass};
+use crate::wire::gdp::{GdpAddress, GdpPacket, GdpWireConfig, SizeClass};
 use crate::wire::gts::StreamProfile;
 
 mod core {
@@ -254,9 +254,8 @@ mod tests {
         let destination = GdpAddress(0x1234_abcd_0000_0001);
         let router = GdpAddress(0x0102_0304_0000_00fe);
         endpoint.routes_mut().add_default_route(router).unwrap();
+        assert_eq!(endpoint.next_hop(destination, Instant::ZERO), Some(router));
 
-        // Routing authorizes/selects the adjacent peer, but the inner endpoint
-        // still builds the GDP header using the final destination.
         endpoint
             .send_echo_at(
                 destination,
@@ -267,10 +266,10 @@ mod tests {
             )
             .unwrap();
 
-        let frame = endpoint.dlp_mut().poll_tx_frame();
-        // No control credit has been granted yet, so the frame remains queued;
-        // successful queueing above is enough to prove route resolution did not
-        // replace the GDP destination with the router address.
-        assert!(matches!(frame, Err(Error::NoCredit)));
+        endpoint.dlp_mut().grant_control_tx_credit(32);
+        let frame = endpoint.dlp_mut().poll_tx_frame().unwrap().unwrap();
+        let packet = GdpPacket::decode(&frame.bytes, GdpWireConfig::default(), 0).unwrap();
+        assert_eq!(packet.header.addresses.effective_destination(), destination);
+        assert_ne!(packet.header.addresses.effective_destination(), router);
     }
 }
