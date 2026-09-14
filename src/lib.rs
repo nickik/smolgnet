@@ -7,6 +7,7 @@ pub mod endpoint;
 pub mod error;
 pub mod gts;
 pub mod link;
+pub mod qdx;
 pub mod wire;
 
 pub use burst::{BurstDirectLink, DEFAULT_DLP_BURST_FLITS};
@@ -15,10 +16,9 @@ pub use endpoint::{
     ListenerConfig, TunnelHandle, BOOTSTRAP_ADDRESS, LINK_LOCAL_PREFIX,
 };
 pub use error::{Error, Result};
-pub use gts::{
-    Direction, GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState,
-};
-pub use link::{DlpConfig, DlpEndpoint, Flit, LinkTraffic, VcMode, Vcid};
+pub use gts::{Direction, GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
+pub use link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
+pub use qdx::{GnetFlitDevice, GnetFrameDevice, QdxDirectLink};
 pub use wire::css::{CssWire, ServiceSelector};
 pub use wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
