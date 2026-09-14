@@ -71,6 +71,18 @@ impl TestLink for BurstDirectLink {
     }
 }
 
+impl TestLink for QdxDirectLink {
+    fn pump(
+        &mut self,
+        a: &mut Endpoint,
+        b: &mut Endpoint,
+        now: u64,
+        max_flits: usize,
+    ) -> Result<usize> {
+        QdxDirectLink::pump(self, a, b, now, max_flits)
+    }
+}
+
 fn run_smolgnet<L: TestLink>(payload: &[u8], mut link: L) -> ResultRow {
     let mut cfg = EndpointConfig::new(400_000);
     cfg.gts_receive_slots = 255;
@@ -87,7 +99,7 @@ fn run_smolgnet<L: TestLink>(payload: &[u8], mut link: L) -> ResultRow {
 
     let mut sent = 0usize;
     let mut output = Vec::with_capacity(payload.len());
-    let mut flits = 0usize;
+    let mut equivalent_flits = 0usize;
     let mut now = 1u64;
     let start = StdInstant::now();
 
@@ -101,13 +113,13 @@ fn run_smolgnet<L: TestLink>(payload: &[u8], mut link: L) -> ResultRow {
             }
         }
 
-        flits += link
+        equivalent_flits += link
             .pump(&mut client, &mut server, now, 8_000_000)
             .unwrap();
         while let Some(msg) = server.recv(server_tunnel, 0).unwrap() {
             output.extend_from_slice(&msg);
         }
-        flits += link
+        equivalent_flits += link
             .pump(&mut client, &mut server, now, 8_000_000)
             .unwrap();
         now += 1;
@@ -118,7 +130,7 @@ fn run_smolgnet<L: TestLink>(payload: &[u8], mut link: L) -> ResultRow {
     ResultRow {
         elapsed,
         bytes: payload.len(),
-        logical_units: flits,
+        logical_units: equivalent_flits,
     }
 }
 
@@ -156,7 +168,6 @@ fn run_smoltcp(payload: &[u8]) -> ResultRow {
             .unwrap();
     }
 
-    // Complete the handshake before measuring payload transfer.
     for _ in 0..10_000 {
         iface.poll(SmolInstant::now(), &mut device, &mut sockets);
         if sockets.get::<tcp::Socket>(client_handle).can_send()
@@ -218,51 +229,42 @@ fn run_smoltcp(payload: &[u8]) -> ResultRow {
 fn compare_one_mib_smolgnet_and_smoltcp_loopback() {
     let payload = random_bytes(ONE_MIB, 0x5eed_cafe_1234_5678);
 
-    // Warm up all paths once so allocator/code-page startup has less influence
-    // on the measured pass.
     let warm = &payload[..64 * 1024];
     let _ = run_smolgnet(warm, DirectLink::new());
     let _ = run_smolgnet(warm, BurstDirectLink::new());
+    let _ = run_smolgnet(warm, QdxDirectLink::new());
     let _ = run_smoltcp(warm);
 
     let legacy = run_smolgnet(&payload, DirectLink::new());
     let burst = run_smolgnet(&payload, BurstDirectLink::new());
+    let qdx = run_smolgnet(&payload, QdxDirectLink::new());
     let tcp = run_smoltcp(&payload);
 
     println!("1 MiB in-memory established-stream transfer");
     println!(
-        "smolgnet legacy flits:  {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} flits",
-        legacy.mib_per_sec(),
-        legacy.gbps(),
-        legacy.elapsed,
-        legacy.logical_units
+        "smolgnet legacy flits:  {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} equivalent flits",
+        legacy.mib_per_sec(), legacy.gbps(), legacy.elapsed, legacy.logical_units
     );
     println!(
-        "smolgnet burst DLP:     {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} flits",
-        burst.mib_per_sec(),
-        burst.gbps(),
-        burst.elapsed,
-        burst.logical_units
+        "smolgnet burst flits:   {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} equivalent flits",
+        burst.mib_per_sec(), burst.gbps(), burst.elapsed, burst.logical_units
+    );
+    println!(
+        "smolgnet QDX frames:    {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} equivalent flits",
+        qdx.mib_per_sec(), qdx.gbps(), qdx.elapsed, qdx.logical_units
     );
     println!(
         "smoltcp TCP loopback:   {:8.2} MiB/s  {:6.3} Gbps  {:?}  {} poll rounds",
-        tcp.mib_per_sec(),
-        tcp.gbps(),
-        tcp.elapsed,
-        tcp.logical_units
+        tcp.mib_per_sec(), tcp.gbps(), tcp.elapsed, tcp.logical_units
     );
+    println!("QDX/burst speedup: {:.3}x", qdx.mib_per_sec() / burst.mib_per_sec());
     println!(
-        "burst/legacy smolgnet speedup: {:.3}x",
-        burst.mib_per_sec() / legacy.mib_per_sec()
-    );
-    println!(
-        "burst smolgnet/smoltcp throughput ratio: {:.3}",
-        burst.mib_per_sec() / tcp.mib_per_sec()
+        "QDX smolgnet/smoltcp throughput ratio: {:.3}",
+        qdx.mib_per_sec() / tcp.mib_per_sec()
     );
 
-    // Performance varies by runner, so correctness is the hard assertion.
-    // The printed ratios are tracked as benchmark observations, not CI gates.
     assert_eq!(legacy.bytes, ONE_MIB);
     assert_eq!(burst.bytes, ONE_MIB);
+    assert_eq!(qdx.bytes, ONE_MIB);
     assert_eq!(tcp.bytes, ONE_MIB);
 }
