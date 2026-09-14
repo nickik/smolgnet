@@ -11,7 +11,7 @@ impl SocketHandle {
     pub const fn generation(self) -> u16 { self.generation }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SocketStorage<T> {
     generation: u16,
     value: Option<T>,
@@ -33,18 +33,12 @@ pub struct SocketSet<'a, T> {
 
 impl<'a, T> SocketSet<'a, T> {
     pub fn new(storage: &'a mut [SocketStorage<T>]) -> Self { Self { storage } }
-
     pub fn capacity(&self) -> usize { self.storage.len() }
     pub fn len(&self) -> usize { self.storage.iter().filter(|s| s.value.is_some()).count() }
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     pub fn add(&mut self, value: T) -> Result<SocketHandle> {
-        let (index, slot) = self
-            .storage
-            .iter_mut()
-            .enumerate()
-            .find(|(_, s)| s.value.is_none())
-            .ok_or(Error::BufferFull)?;
+        let (index, slot) = self.storage.iter_mut().enumerate().find(|(_, s)| s.value.is_none()).ok_or(Error::BufferFull)?;
         if index > u16::MAX as usize { return Err(Error::BufferFull); }
         slot.value = Some(value);
         Ok(SocketHandle { index: index as u16, generation: slot.generation })
@@ -52,45 +46,28 @@ impl<'a, T> SocketSet<'a, T> {
 
     fn checked_slot(&self, handle: SocketHandle) -> Result<&SocketStorage<T>> {
         let slot = self.storage.get(handle.index()).ok_or(Error::InvalidField)?;
-        if slot.generation != handle.generation || slot.value.is_none() {
-            return Err(Error::InvalidState);
-        }
+        if slot.generation != handle.generation || slot.value.is_none() { return Err(Error::InvalidState); }
         Ok(slot)
     }
-
     fn checked_slot_mut(&mut self, handle: SocketHandle) -> Result<&mut SocketStorage<T>> {
         let slot = self.storage.get_mut(handle.index()).ok_or(Error::InvalidField)?;
-        if slot.generation != handle.generation || slot.value.is_none() {
-            return Err(Error::InvalidState);
-        }
+        if slot.generation != handle.generation || slot.value.is_none() { return Err(Error::InvalidState); }
         Ok(slot)
     }
-
-    pub fn get(&self, handle: SocketHandle) -> Result<&T> {
-        self.checked_slot(handle)?.value.as_ref().ok_or(Error::InvalidState)
-    }
-
-    pub fn get_mut(&mut self, handle: SocketHandle) -> Result<&mut T> {
-        self.checked_slot_mut(handle)?.value.as_mut().ok_or(Error::InvalidState)
-    }
-
+    pub fn get(&self, handle: SocketHandle) -> Result<&T> { self.checked_slot(handle)?.value.as_ref().ok_or(Error::InvalidState) }
+    pub fn get_mut(&mut self, handle: SocketHandle) -> Result<&mut T> { self.checked_slot_mut(handle)?.value.as_mut().ok_or(Error::InvalidState) }
     pub fn remove(&mut self, handle: SocketHandle) -> Result<T> {
         let slot = self.checked_slot_mut(handle)?;
         let value = slot.value.take().ok_or(Error::InvalidState)?;
         slot.generation = slot.generation.wrapping_add(1).max(1);
         Ok(value)
     }
-
     pub fn iter(&self) -> impl Iterator<Item = (SocketHandle, &T)> {
         self.storage.iter().enumerate().filter_map(|(index, slot)| {
             let value = slot.value.as_ref()?;
-            Some((
-                SocketHandle { index: index as u16, generation: slot.generation },
-                value,
-            ))
+            Some((SocketHandle { index: index as u16, generation: slot.generation }, value))
         })
     }
-
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (SocketHandle, &mut T)> {
         self.storage.iter_mut().enumerate().filter_map(|(index, slot)| {
             let generation = slot.generation;
@@ -98,7 +75,6 @@ impl<'a, T> SocketSet<'a, T> {
             Some((SocketHandle { index: index as u16, generation }, value))
         })
     }
-
     pub fn find(&self, mut predicate: impl FnMut(&T) -> bool) -> Option<SocketHandle> {
         self.iter().find_map(|(h, value)| predicate(value).then_some(h))
     }
@@ -112,7 +88,7 @@ mod owned {
 
     /// Alloc-backed convenience SocketSet used by hosted/default builds.
     /// Bare-metal code should prefer [`super::SocketSet`].
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, Clone)]
     pub struct OwnedSocketSet<T> {
         storage: Vec<SocketStorage<T>>,
     }
@@ -121,7 +97,6 @@ mod owned {
         pub const fn new() -> Self { Self { storage: Vec::new() } }
         pub fn len(&self) -> usize { self.storage.iter().filter(|s| s.value.is_some()).count() }
         pub fn is_empty(&self) -> bool { self.len() == 0 }
-
         pub fn add(&mut self, value: T) -> Result<SocketHandle> {
             if let Some((index, slot)) = self.storage.iter_mut().enumerate().find(|(_, s)| s.value.is_none()) {
                 if index > u16::MAX as usize { return Err(Error::BufferFull); }
@@ -136,19 +111,16 @@ mod owned {
             self.storage.push(slot);
             Ok(SocketHandle { index: index as u16, generation })
         }
-
         pub fn get(&self, handle: SocketHandle) -> Result<&T> {
             let slot = self.storage.get(handle.index()).ok_or(Error::InvalidField)?;
             if slot.generation != handle.generation { return Err(Error::InvalidState); }
             slot.value.as_ref().ok_or(Error::InvalidState)
         }
-
         pub fn get_mut(&mut self, handle: SocketHandle) -> Result<&mut T> {
             let slot = self.storage.get_mut(handle.index()).ok_or(Error::InvalidField)?;
             if slot.generation != handle.generation { return Err(Error::InvalidState); }
             slot.value.as_mut().ok_or(Error::InvalidState)
         }
-
         pub fn remove(&mut self, handle: SocketHandle) -> Result<T> {
             let slot = self.storage.get_mut(handle.index()).ok_or(Error::InvalidField)?;
             if slot.generation != handle.generation { return Err(Error::InvalidState); }
@@ -156,14 +128,12 @@ mod owned {
             slot.generation = slot.generation.wrapping_add(1).max(1);
             Ok(value)
         }
-
         pub fn iter(&self) -> impl Iterator<Item = (SocketHandle, &T)> {
             self.storage.iter().enumerate().filter_map(|(index, slot)| {
                 let value = slot.value.as_ref()?;
                 Some((SocketHandle { index: index as u16, generation: slot.generation }, value))
             })
         }
-
         pub fn iter_mut(&mut self) -> impl Iterator<Item = (SocketHandle, &mut T)> {
             self.storage.iter_mut().enumerate().filter_map(|(index, slot)| {
                 let generation = slot.generation;
@@ -171,12 +141,10 @@ mod owned {
                 Some((SocketHandle { index: index as u16, generation }, value))
             })
         }
-
         pub fn find(&self, mut predicate: impl FnMut(&T) -> bool) -> Option<SocketHandle> {
             self.iter().find_map(|(h, value)| predicate(value).then_some(h))
         }
     }
-
     pub use OwnedSocketSet as PublicOwnedSocketSet;
 }
 
@@ -186,7 +154,6 @@ pub use owned::PublicOwnedSocketSet as OwnedSocketSet;
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn borrowed_socket_set_rejects_stale_handle() {
         let mut slots = [SocketStorage::<u32>::EMPTY, SocketStorage::<u32>::EMPTY];
@@ -199,7 +166,6 @@ mod tests {
         assert_eq!(set.get(h), Err(Error::InvalidState));
         assert_eq!(*set.get(h2).unwrap(), 20);
     }
-
     #[test]
     fn borrowed_socket_set_is_strictly_bounded() {
         let mut slots = [SocketStorage::<u8>::EMPTY];
