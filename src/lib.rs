@@ -2,12 +2,14 @@
 
 extern crate alloc;
 
+pub mod burst;
 pub mod endpoint;
 pub mod error;
 pub mod gts;
 pub mod link;
 pub mod wire;
 
+pub use burst::{BurstDirectLink, DEFAULT_DLP_BURST_FLITS};
 pub use endpoint::{
     make_link_local, AddressAuthorityConfig, AddressState, DirectLink, Endpoint, EndpointConfig,
     ListenerConfig, TunnelHandle, BOOTSTRAP_ADDRESS, LINK_LOCAL_PREFIX,
