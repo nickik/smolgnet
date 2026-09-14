@@ -119,5 +119,55 @@ pub struct GdpPacket { pub header:GdpHeader, pub payload:Vec<u8> }
 impl GdpPacket {
     pub fn new(header:GdpHeader,payload:Vec<u8>)->Result<Self>{ if payload.len()!=header.size_class.bytes(){return Err(Error::InvalidLength)} Ok(Self{header,payload}) }
     pub fn encode(&self,cfg:GdpWireConfig)->Result<Vec<u8>>{ let mut out=self.header.encode(cfg)?; out.extend_from_slice(&self.payload); Ok(out) }
-    pub fn decode(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{ let header=GdpHeader::decode(buf,cfg,local_prefix)?; let h=header.header_len(); let total=h+header.size_class.bytes(); if buf.len()!=total{return Err(Error::InvalidLength)}; Ok(Self{header,payload:buf[h..].to_vec()}) }
+    pub fn decode(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
+        let header=GdpHeader::decode(buf,cfg,local_prefix)?;
+        let h=header.header_len();
+        let total=h+header.size_class.bytes();
+        if buf.len()!=total{return Err(Error::InvalidLength)}
+        let packet=Self{header,payload:buf[h..].to_vec()};
+        #[cfg(feature = "p4-gdp-compare")]
+        compare_with_p4(buf, cfg, &packet)?;
+        Ok(packet)
+    }
+}
+
+#[cfg(feature = "p4-gdp-compare")]
+fn compare_with_p4(buf: &[u8], cfg: GdpWireConfig, rust: &GdpPacket) -> Result<()> {
+    // The current gdp.p4 executable description uses the protocol-default
+    // encoding where a set form bit means Local. Keep non-default experimental
+    // wire configurations on the hand-written decoder until gdp.p4 is made
+    // configurable as well.
+    if !cfg.local_form_bit {
+        return Ok(());
+    }
+
+    use p4_gdp::{ParsedAddresses, validate_gdp};
+
+    let p4 = validate_gdp(buf).map_err(|_| Error::InvalidField)?;
+    if p4.version != rust.header.version
+        || p4.packet_type != rust.header.packet_type.to_wire()
+        || p4.size_class != rust.header.size_class as u8
+        || p4.hop_limit != rust.header.hop_limit
+        || p4.local_form != matches!(rust.header.addresses, GdpAddresses::Local { .. })
+    {
+        return Err(Error::InvalidField);
+    }
+
+    match (&rust.header.addresses, p4.addresses) {
+        (
+            GdpAddresses::Global { destination, source },
+            ParsedAddresses::Global { destination: p4_destination, source: p4_source },
+        ) if destination.0 == p4_destination && source.0 == p4_source => {}
+        (
+            GdpAddresses::Local { destination, source, .. },
+            ParsedAddresses::Local { destination: p4_destination, source: p4_source },
+        ) if *destination == p4_destination && *source == p4_source => {}
+        _ => return Err(Error::InvalidField),
+    }
+
+    if p4.packet_len() != buf.len() || p4.header_len() != rust.header.header_len() {
+        return Err(Error::InvalidLength);
+    }
+
+    Ok(())
 }
