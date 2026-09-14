@@ -22,6 +22,10 @@ alloc = []
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 
 [[test]]
+name = "heapless_api"
+path = "tests/heapless_api.rs"
+
+[[test]]
 name = "wire"
 path = "tests/wire.rs"
 required-features = ["alloc"]
