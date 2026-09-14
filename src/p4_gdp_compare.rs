@@ -9,13 +9,13 @@ p4_macro::use_p4!(
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParsedAddresses {
+pub enum ParsedAddresses {
     Global { destination: u64, source: u64 },
     Local { destination: u16, source: u16 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ParsedGdp {
+pub struct ParsedGdp {
     pub version: u8,
     pub packet_type: u8,
     pub size_class: u8,
@@ -25,7 +25,7 @@ pub(crate) struct ParsedGdp {
     pub addresses: ParsedAddresses,
 }
 
-pub(crate) fn parse_and_validate(bytes: &[u8]) -> core::result::Result<ParsedGdp, ()> {
+pub fn parse_and_validate(bytes: &[u8]) -> core::result::Result<ParsedGdp, ()> {
     if bytes.len() < 4 {
         return Err(());
     }
