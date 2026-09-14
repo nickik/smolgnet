@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::gts::{GtsTunnel, StreamState, TunnelRole, TunnelState};
-use crate::link::{DlpConfig, DlpEndpoint, Flit, VcMode};
+use crate::link::{DlpConfig, DlpEndpoint, Flit, GnetFrame, VcMode};
 use crate::wire::css::ServiceSelector;
 use crate::wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
@@ -901,6 +901,13 @@ impl Endpoint {
         self.dlp.poll_tx()
     }
 
+    /// Poll one complete GNET frame at the QDX-GNET host/device boundary.
+    /// Raw flit backends should continue to use `poll_tx_flit`/DLP burst APIs.
+    pub fn poll_tx_frame(&mut self) -> Result<Option<GnetFrame>> {
+        self.maybe_request_link_credit()?;
+        self.dlp.poll_tx_frame()
+    }
+
     pub fn receive_flit(&mut self, flit: Flit, now: u64) -> Result<bool> {
         if let Some(packet) = self.dlp.receive(flit)? {
             self.handle_gdp(packet, now)?;
@@ -909,6 +916,16 @@ impl Endpoint {
         } else {
             Ok(false)
         }
+    }
+
+    /// Receive one complete GNET frame from a QDX-GNET-style controller.
+    /// The frame boundary is trusted as a link/device boundary, while GDP and
+    /// GTS CRCs are still decoded and validated normally.
+    pub fn receive_frame(&mut self, frame: GnetFrame, now: u64) -> Result<bool> {
+        let packet = self.dlp.receive_frame(frame)?;
+        self.handle_gdp(packet, now)?;
+        self.advertise_link_credit(false)?;
+        Ok(true)
     }
 
     fn accepts_destination(&self, destination: GdpAddress) -> bool {
