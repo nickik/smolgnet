@@ -12,8 +12,9 @@ autoexamples = false
 autobenches = false
 
 [features]
-default = ["std"]
-std = []
+default = ["std", "alloc"]
+std = ["alloc"]
+alloc = []
 
 [dependencies]
 
@@ -21,29 +22,45 @@ std = []
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 
 [[test]]
+name = "heapless_api"
+path = "tests/heapless_api.rs"
+
+[[test]]
 name = "wire"
 path = "tests/wire.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "link"
 path = "tests/link.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "transport"
 path = "tests/transport.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "endpoint"
 path = "tests/endpoint.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "behavior"
 path = "tests/behavior.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "faults"
 path = "tests/faults.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "qdx"
+path = "tests/qdx.rs"
+required-features = ["alloc"]
 
 [[test]]
 name = "performance"
 path = "tests/performance.rs"
+required-features = ["alloc"]

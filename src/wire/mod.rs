@@ -1,5 +1,7 @@
 pub mod crc;
 pub mod css;
-pub mod gctl;
 pub mod gdp;
 pub mod gts;
+
+#[cfg(feature = "alloc")]
+pub mod gctl;
