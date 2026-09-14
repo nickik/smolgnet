@@ -1,3 +1,5 @@
+mod support;
+
 use std::time::{Duration, Instant as StdInstant};
 
 use smolgnet::*;
@@ -6,6 +8,7 @@ use smoltcp::phy::{Loopback, Medium};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant as SmolInstant;
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
+use support::qdx::QdxDirectLink;
 
 const ONE_MIB: usize = 1024 * 1024;
 
