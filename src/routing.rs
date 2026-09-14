@@ -215,6 +215,15 @@ impl<const N: usize> RouteTable<N> {
         best.map(|route| route.via_router)
     }
 
+    /// Earliest finite route expiry, used by endpoint scheduling.
+    pub fn next_expiry(&self) -> Option<Instant> {
+        self.routes
+            .iter()
+            .flatten()
+            .filter_map(|route| route.expires_at)
+            .min()
+    }
+
     pub fn prune_expired(&mut self, now: Instant) -> usize {
         let mut removed = 0;
         for slot in &mut self.routes {
@@ -290,6 +299,28 @@ mod tests {
             routes.lookup(addr(0xaaaa_1234), Instant::from_millis(11)),
             Some(addr(20))
         );
+    }
+
+    #[test]
+    fn earliest_expiry_is_reported() {
+        let mut routes: RouteTable<3> = RouteTable::new();
+        let mut later = Route::new_default(addr(1));
+        later.expires_at = Some(Instant::from_millis(50));
+        let mut sooner = Route::new(
+            GdpPrefix::new(addr(0xaaaa_0000_0000_0000), 16).unwrap(),
+            addr(2),
+        );
+        sooner.expires_at = Some(Instant::from_millis(20));
+        routes.add(later).unwrap();
+        routes.add(sooner).unwrap();
+        routes
+            .add(Route::new(
+                GdpPrefix::new(addr(0xbbbb_0000_0000_0000), 16).unwrap(),
+                addr(3),
+            ))
+            .unwrap();
+
+        assert_eq!(routes.next_expiry(), Some(Instant::from_millis(20)));
     }
 
     #[test]
