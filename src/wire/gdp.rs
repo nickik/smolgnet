@@ -106,6 +106,12 @@ impl GdpHeader{
         Self::decode_handwritten(buf,cfg,local_prefix)
     }
 
+    #[cfg(feature="p4-gdp")]
+    #[doc(hidden)]
+    pub fn decode_handwritten_reference(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
+        Self::decode_handwritten(buf,cfg,local_prefix)
+    }
+
     fn decode_handwritten(buf:&[u8],cfg:GdpWireConfig,local_prefix:u64)->Result<Self>{
         if buf.len()<4{return Err(Error::InvalidLength)}let w=u32::from_be_bytes(buf[0..4].try_into().unwrap());let version=((w>>30)&3)as u8;let packet_type=GdpType::from_wire(((w>>26)&0xf)as u8);let size_class=SizeClass::from_wire(((w>>22)&0xf)as u8)?;let form=cfg.form_from_bit(((w>>21)&1)!=0);let received_crc=((w>>8)&0xff)as u8;
         let header=match form{AddressForm::Global=>{if buf.len()<20{return Err(Error::InvalidLength)}let hop=(w&0xff)as u8;let destination=GdpAddress(u64::from_be_bytes(buf[4..12].try_into().unwrap()));let source=GdpAddress(u64::from_be_bytes(buf[12..20].try_into().unwrap()));Self{version,packet_type,size_class,hop_limit:hop,addresses:GdpAddresses::Global{destination,source}}}AddressForm::Local=>{if buf.len()<8{return Err(Error::InvalidLength)}let hop=(w&0xf)as u8;let ids=u32::from_be_bytes(buf[4..8].try_into().unwrap());Self{version,packet_type,size_class,hop_limit:hop,addresses:GdpAddresses::Local{destination:(ids>>16)as u16,source:ids as u16,prefix:local_prefix&!0xffff}}}};
