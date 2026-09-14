@@ -21,9 +21,17 @@ header gdp_base_h {
     bit<8> hop;
 }
 
+/*
+ * x4c's Rust target currently has little coverage for 64-bit scalar fields.
+ * Keep the exact 128-bit wire layout while representing each 64-bit GDP
+ * address as two 32-bit words. The logical address is destination_hi/lo or
+ * source_hi/lo; this is an implementation detail, not a GDP wire change.
+ */
 header gdp_global_h {
-    bit<64> destination;
-    bit<64> source;
+    bit<32> destination_hi;
+    bit<32> destination_lo;
+    bit<32> source_hi;
+    bit<32> source_lo;
 }
 
 header gdp_local_h {
@@ -44,10 +52,10 @@ parser parse(
 ) {
     state start {
         pkt.extract(hdr.base);
-        transition select(hdr.base.local_form) {
-            1w1: parse_local;
-            1w0: parse_global;
+        if (hdr.base.local_form == 1w1) {
+            transition parse_local;
         }
+        transition parse_global;
     }
 
     state parse_global {
@@ -67,7 +75,7 @@ control ingress(
     inout egress_metadata_t egress,
 ) {
     apply {
-        // Phase 0/1 behavior is intentionally transparent.  Forwarding,
+        // Phase 0/1 behavior is intentionally transparent. Forwarding,
         // hop-limit mutation, CRC validation, and route tables are added only
         // after parser/deparser conformance with smolgnet is established.
         egress.port = ingress.port;
