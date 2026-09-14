@@ -16,7 +16,6 @@ default = ["std", "alloc"]
 std = ["alloc"]
 alloc = []
 async = []
-host-tap = ["std", "dep:libc"]
 # Use the x4c-generated P4 parser for normal GDP header decoding. The pinned
 # p4rs runtime is currently std-only; no_std support is tracked separately.
 p4-gdp = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
@@ -25,7 +24,6 @@ p4-gdp = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored
 p4-gdp-compare = ["p4-gdp"]
 
 [dependencies]
-libc = { version = "0.2", optional = true }
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
 p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
 bitvec = { version = "1.0", optional = true }
@@ -74,11 +72,6 @@ required-features = ["alloc"]
 name = "qdx"
 path = "tests/qdx.rs"
 required-features = ["alloc"]
-
-[[test]]
-name = "host_tap"
-path = "tests/host_tap.rs"
-required-features = ["host-tap"]
 
 [[test]]
 name = "performance"
