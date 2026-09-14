@@ -11,6 +11,7 @@ pub enum Error {
     NonCanonical,
     BufferFull,
     NoCredit,
+    NoRoute,
     CreditViolation,
     LinkDown,
     Desynchronized,
