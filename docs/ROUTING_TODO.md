@@ -132,11 +132,29 @@ GDP has no fragmentation, so routing must not inherit smoltcp's fragmentation ma
 - [ ] Provide explicit pruning for long-running routers.
 - [ ] Route-table changes wake blocked transmitters where async support is enabled.
 
-## 11. Hosted TAP routing tests
+## 11. Native virtual-NIC routing tests
 
-Use the TAP adapter only as a host test transport. TAP/Ethernet headers are never visible to GDP routing.
+Do not use TUN or TAP for GNet routing tests. TUN is an IP-layer kernel interface and TAP is an Ethernet-layer kernel interface; both introduce a host protocol that GNet does not use.
 
-- [ ] Two-interface software router process with one TAP per GNet interface.
+Use paired `VirtualNic` devices carrying native `GnetFrame` values directly:
+
+```text
+Endpoint A
+   |
+VirtualNic A0 ===== VirtualNic R0
+                         |
+                    router ingress
+                         |
+                    GDP route lookup
+                         |
+                    router egress
+                         |
+VirtualNic R1 ===== VirtualNic B0
+   |
+Endpoint B
+```
+
+- [ ] Two-interface software router with one native `GnetFrameDevice` per interface.
 - [ ] Endpoint A -> router -> Endpoint B forwarding test.
 - [ ] Verify longest-prefix selection with two possible egress links.
 - [ ] Verify default route.
@@ -145,6 +163,10 @@ Use the TAP adapter only as a host test transport. TAP/Ethernet headers are neve
 - [ ] Verify Local GDP on one side can forward as Global GDP on another side and retain canonical identities.
 - [ ] Verify GTS tunnel traffic survives packet-by-packet routing.
 - [ ] Verify reliable GTS retransmission through a routed loss/fault scenario.
+- [ ] Verify bounded virtual-NIC queues apply backpressure rather than silently dropping frames.
+- [ ] Verify interface-down state withdraws/invalidates connected forwarding paths.
+
+If process isolation is later useful, add a separate `GnetFrameDevice` backend over Unix-domain `SOCK_SEQPACKET`. That is host IPC only; it must carry the same native frame representation and must not change GDP/DLP semantics.
 
 ## 12. Router-facing API
 
@@ -171,6 +193,7 @@ Not part of the initial routing implementation, but the static design must leave
 ## Explicit non-goals for the first routing milestone
 
 - raw GDP application sockets
+- TUN/TAP-based GNet test transport
 - Ethernet bridging
 - ARP or MAC neighbor discovery
 - packet fragmentation/reassembly
@@ -181,7 +204,7 @@ Not part of the initial routing implementation, but the static design must leave
 The first target should be deliberately small:
 
 ```text
-multiple GNet interfaces
+multiple native GNet interfaces
         +
 connected/static/default routes
         +
@@ -191,7 +214,7 @@ GDP Hop Limit forwarding
         +
 GCTL forwarding errors
         +
-TAP-based routed integration tests
+native VirtualNic routed integration tests
 ```
 
 Once this works reliably, dynamic routing can be reconsidered as a separate protocol/control-plane component.
