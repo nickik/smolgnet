@@ -43,6 +43,10 @@ pub(crate) fn parse_and_validate(bytes: &[u8]) -> core::result::Result<ParsedGdp
         return Err(());
     }
 
+    // x4c currently exposes sub-byte/byte fields in network bit order, while
+    // its generated Header::set() reverses wider fields. Mirror the adapter
+    // used by p4-gdp conformance tests so this host-stack experiment tests the
+    // same generated representation rather than inventing a second mapping.
     let version = hdr.base.version.load_be::<u8>();
     let packet_type = hdr.base.packet_type.load_be::<u8>();
     let size_class = hdr.base.size_class.load_be::<u8>();
@@ -50,14 +54,14 @@ pub(crate) fn parse_and_validate(bytes: &[u8]) -> core::result::Result<ParsedGdp
     let raw_hop = hdr.base.hop.load_be::<u8>();
     let addresses = if local_form {
         ParsedAddresses::Local {
-            destination: hdr.local_addr.destination.load_be::<u16>(),
-            source: hdr.local_addr.source.load_be::<u16>(),
+            destination: hdr.local_addr.destination.load_le::<u16>(),
+            source: hdr.local_addr.source.load_le::<u16>(),
         }
     } else {
-        let dhi = hdr.global_addr.destination_hi.load_be::<u32>() as u64;
-        let dlo = hdr.global_addr.destination_lo.load_be::<u32>() as u64;
-        let shi = hdr.global_addr.source_hi.load_be::<u32>() as u64;
-        let slo = hdr.global_addr.source_lo.load_be::<u32>() as u64;
+        let dhi = hdr.global_addr.destination_hi.load_le::<u32>() as u64;
+        let dlo = hdr.global_addr.destination_lo.load_le::<u32>() as u64;
+        let shi = hdr.global_addr.source_hi.load_le::<u32>() as u64;
+        let slo = hdr.global_addr.source_lo.load_le::<u32>() as u64;
         ParsedAddresses::Global {
             destination: (dhi << 32) | dlo,
             source: (shi << 32) | slo,
