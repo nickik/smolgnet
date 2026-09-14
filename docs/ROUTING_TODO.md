@@ -1,227 +1,178 @@
 # Routing TODO
 
-This document defines the routing work to do after the point-to-point smolgnet baseline.
+This document defines the intentionally small routing support for `smolgnet`.
 
-The goal is to retain the useful routing behavior that existed in smoltcp, but express it in native GNet terms rather than carrying IP/Ethernet assumptions forward.
+The goal is **not** to turn `smolgnet` into the GNet router implementation. For now, routing should stay close to smoltcp's model: a small bounded table used by endpoints or simple test setups to choose a next-hop router for a destination.
 
-Dynamic route exchange is deliberately not part of the first routing milestone. The initial implementation is connected routes + manually configured static/default routes + GDP forwarding. A future routing protocol or routing daemon must be able to populate the same route table without changing GDP forwarding.
+A future dedicated router implementation / routing daemon can build a richer RIB/FIB, multiple-interface forwarding, dynamic routing, policy, metrics, and hardware programming outside `smolgnet`.
 
-## 1. GNet route types
+## Scope for the current milestone
 
-- [ ] Add a canonical 64-bit `GdpPrefix` / `GdpCidr` type.
-  - prefix lengths 0..=64
-  - canonical host bits cleared
-  - `contains(GdpAddress)`
-  - ordering/equality suitable for deterministic tests
-- [ ] Add `Route`.
-  - destination prefix
-  - optional next-hop GDP address
-  - output interface/link handle
-  - administrative/static origin metadata
-  - `preferred_until: Option<Instant>`
-  - `expires_at: Option<Instant>`
-- [ ] Add `RouteTableFull` or equivalent bounded-capacity error.
-- [ ] Support both caller-bounded/no-alloc storage and alloc-backed convenience storage.
-
-## 2. Preserve the useful smoltcp route-table behavior
-
-smoltcp's route table provides arbitrary CIDR routes, default gateways, bounded storage, route mutation, expiry fields, and longest-prefix lookup. GNet should keep those capabilities with one 64-bit address family.
-
-- [ ] Empty route table constructor.
-- [ ] Fixed maximum route count for heapless targets.
-- [ ] Optional zero-route configuration for very small endpoints.
-- [ ] Bulk/update API so callers can edit route storage without repeated allocations.
-- [ ] Add arbitrary static prefix routes.
-- [ ] Remove arbitrary routes.
-- [ ] Add default route (`0/0`).
-- [ ] Get current default route.
-- [ ] Replace current default route and return the old route.
-- [ ] Remove default route and return the old route.
-- [ ] Longest-prefix match.
-- [ ] Ignore expired routes during lookup.
-- [ ] Define exact semantics of `preferred_until`.
-  - likely prefer non-deprecated routes among otherwise equivalent candidates
-  - never override longer-prefix matching
-- [ ] Deterministic tie breaking for equal prefix length.
-- [ ] Tests equivalent to smoltcp route lookup/default/expiry tests using 64-bit GNet addresses.
-
-## 3. GNet-specific direct/connected routes
-
-GNet does not have an Ethernet/ARP neighbor layer. A route therefore resolves to an output link and, where needed, a GDP next hop rather than to a MAC neighbor-cache lookup.
-
-- [ ] Represent directly connected GDP prefixes per interface.
-- [ ] Directly connected route wins before less-specific static/default routes.
-- [ ] Allow point-to-point links to have an explicit peer/router address.
-- [ ] Define `next_hop = destination` for directly reachable destinations where appropriate.
-- [ ] Define `next_hop = route.via_router` for routed destinations.
-- [ ] No ARP/neighbor cache compatibility layer.
-- [ ] No Ethernet MAC address in routing APIs.
-
-## 4. Multiple interfaces
-
-smoltcp's normal route lookup is largely interface-local. A useful GNet router must select among several native links.
-
-- [ ] Introduce stable interface/link handles.
-- [ ] Per-interface canonical local GDP address(es).
-- [ ] Per-interface link-local address.
-- [ ] Per-interface optional Local-GDP /48 context.
-- [ ] Per-interface supported Size Classes/path constraints.
-- [ ] Per-interface link state.
-- [ ] Per-interface point-to-point peer information where applicable.
-- [ ] Route result contains output interface + next hop.
-- [ ] Route removal when an interface disappears or changes identity.
-
-## 5. Source-address selection
-
-Preserve the useful smoltcp behavior of selecting an appropriate source address for outgoing traffic, but use GNet's canonical address model.
-
-- [ ] Prefer the source identity assigned to the selected output interface.
-- [ ] Preserve an explicitly selected valid local source address.
-- [ ] Define behavior for router-generated GCTL errors when several addresses are available.
-- [ ] Local GDP encoding is selected only after the canonical source/destination and output interface are known.
-
-## 6. Local delivery versus forwarding
-
-Do not copy smoltcp `AnyIP` literally. Split its useful behavior into explicit GNet concepts.
-
-- [ ] Exact local-address delivery.
-- [ ] Explicit prefix-local delivery option for virtual/service/router-owned prefixes.
-  - this is the GNet replacement for the useful part of smoltcp AnyIP
-  - disabled by default
-  - must not accidentally turn all routed traffic into local traffic
-- [ ] Packets not locally owned enter the forwarding path only when forwarding is enabled.
-- [ ] Endpoint-only builds can keep forwarding disabled and omit route storage entirely.
-
-## 7. GDP forwarding pipeline
-
-- [ ] Decode enough GDP header to obtain canonical source/destination, Size Class, address form and Hop Limit.
-- [ ] Validate GDP header CRC before route commitment.
-- [ ] Decide local delivery versus forwarding.
-- [ ] Longest-prefix route lookup on canonical 64-bit destination.
-- [ ] Select egress interface and next hop.
-- [ ] Decrement Hop Limit on forwarded packets.
-- [ ] Do not recalculate GDP CRC merely because Hop Limit changed; Hop Limit is intentionally excluded from CRC-8-GNET.
-- [ ] Re-encode Global versus Local GDP form for the egress link according to that link's configured context.
-- [ ] Preserve canonical endpoint identities across Local/Global re-encoding.
-- [ ] Preserve GDP Type and Size Class unchanged unless a future protocol explicitly defines otherwise.
-
-## 8. Forwarding errors / GCTL
-
-- [ ] No route -> `DESTINATION_UNREACHABLE`.
-- [ ] Hop Limit exhausted -> `HOP_LIMIT_EXCEEDED`.
-- [ ] Invalid header/parameter -> `PARAMETER_PROBLEM` where recovery permits.
-- [ ] Egress cannot carry the requested Size Class -> `CLASS_UNSUPPORTED`.
-- [ ] Forwarding/link failure after acceptance -> determine when `TRANSIT_ABORTED` is appropriate.
-- [ ] Never generate an error in response to an error when that would create loops.
-- [ ] Rate-limit router-generated control errors.
-
-## 9. Size Class and path behavior
-
-GDP has no fragmentation, so routing must not inherit smoltcp's fragmentation machinery.
-
-- [ ] No fragmentation/reassembly layer.
-- [ ] Route/interface lookup can reject unsupported packet Size Classes.
-- [ ] Define whether a route may advertise a maximum supported Size Class as cached path information.
-- [ ] Keep path Size-Class discovery as a separate GCTL concern rather than silently fragmenting.
-- [ ] Tests for forwarding 64B..8192B classes across interfaces with different support.
-
-## 10. Scheduler and route lifetime integration
-
-- [ ] Route expiry participates in `poll_at` / `poll_delay` when necessary.
-- [ ] Expired routes need not be eagerly removed if lookup can ignore them safely.
-- [ ] Provide explicit pruning for long-running routers.
-- [ ] Route-table changes wake blocked transmitters where async support is enabled.
-
-## 11. Routing integration tests
-
-Production routing code must know only the normal `GnetFrameDevice` / DLP interfaces. Test transports belong under `tests/support`; do not add host-only IPC or virtual-NIC implementations to `src/`.
-
-Two useful test backends now exist only in test support:
-
-- an in-process bounded virtual NIC pair for deterministic unit/integration tests;
-- an AF_UNIX `SOCK_SEQPACKET` NIC for running two smolgnet endpoints in separate host processes while preserving one native GNet/QDX frame per IPC record.
-
-Neither backend uses IP, Ethernet, TUN, TAP, MAC addressing, or a host network protocol. The tiny seqpacket record wrapper is host-test metadata only and is not part of GNet.
-
-Target routed topology:
+Keep only:
 
 ```text
-Endpoint A
-   |
-test NIC A0 ===== test NIC R0
-                        |
-                   router ingress
-                        |
-                   GDP route lookup
-                        |
-                   router egress
-                        |
-test NIC R1 ===== test NIC B0
-   |
-Endpoint B
+GDP destination
+      |
+small bounded route table
+      |
+longest-prefix match
+      |
+next-hop GDP router
 ```
 
-- [ ] Two-interface software router with one `GnetFrameDevice` per interface.
-- [ ] Endpoint A -> router -> Endpoint B forwarding test.
-- [ ] Run the basic routed test first in-process, then with process-separated seqpacket endpoints/router where useful.
-- [ ] Verify longest-prefix selection with two possible egress links.
-- [ ] Verify default route.
-- [ ] Verify no-route GCTL error.
-- [ ] Verify Hop Limit decrement/exhaustion.
-- [ ] Verify Local GDP on one side can forward as Global GDP on another side and retain canonical identities.
-- [ ] Verify GTS tunnel traffic survives packet-by-packet routing.
-- [ ] Verify reliable GTS retransmission through a routed loss/fault scenario.
-- [ ] Verify bounded test queues apply backpressure rather than silently dropping frames.
-- [ ] Verify interface-down state withdraws/invalidates connected forwarding paths.
+No multi-interface forwarding engine is required here.
 
-## 12. Router-facing API
+## 1. GDP prefix type
 
-Keep the forwarding engine usable by small embedded routers, Unix test programs, Cosmic OS, and future QDX/PLIO hardware.
+- [x] Add canonical 64-bit `GdpPrefix`.
+  - [x] Prefix lengths `0..=64`.
+  - [x] Clear host bits on construction.
+  - [x] `contains(GdpAddress)`.
+  - [x] Deterministic equality/order.
+  - [x] `/0` default prefix helper.
+- [x] Reject invalid prefix lengths.
+- [x] Unit tests for canonicalization and matching.
 
-- [ ] Separate RIB-like route configuration from fast forwarding lookup.
-- [ ] Small immutable/compiled FIB representation where useful.
-- [ ] Route add/replace/delete/query API.
-- [ ] Interface add/remove/up/down API.
-- [ ] Counters for packets/flits forwarded, dropped, no-route, hop-limit and class errors.
-- [ ] Tracer events for ingress route decision, egress selection and forwarding error.
-- [ ] No requirement for a background routing daemon.
+## 2. Minimal Route type
 
-## 13. Future dynamic routing hook
-
-Not part of the initial routing implementation, but the static design must leave a clean insertion point.
-
-- [ ] Route origin/owner field so a future protocol can install and withdraw routes.
-- [ ] Administrative preference/metric field only if needed by multiple route producers.
-- [ ] Atomic route replacement/update API.
-- [ ] Independent routing daemon can populate routes without becoming part of GDP.
-- [ ] Do not embed a specific dynamic routing algorithm into the forwarding engine.
-
-## Explicit non-goals for the first routing milestone
-
-- raw GDP application sockets
-- TUN/TAP-based GNet transport
-- Ethernet bridging
-- ARP or MAC neighbor discovery
-- packet fragmentation/reassembly
-- multicast/group routing
-- dynamic routing protocol
-- NAT-like address rewriting
-- promoting test-only VirtualNic/seqpacket implementations into the public library
-
-The first target should be deliberately small:
+Match smoltcp's useful route fields as closely as practical:
 
 ```text
-multiple native GNet interfaces
-        +
-connected/static/default routes
-        +
-64-bit longest-prefix lookup
-        +
-GDP Hop Limit forwarding
-        +
-GCTL forwarding errors
-        +
-test-only native-frame integration harnesses
+Route
+    destination prefix
+    via router
+    preferred_until
+    expires_at
 ```
 
-Once this works reliably, dynamic routing can be reconsidered as a separate protocol/control-plane component.
+- [x] Add `Route` with destination `GdpPrefix`.
+- [x] Add `via_router: GdpAddress`.
+- [x] Add `preferred_until: Option<Instant>`.
+- [x] Add `expires_at: Option<Instant>`.
+- [x] Add normal route constructor.
+- [x] Add default-route constructor.
+- [x] Add default-route identification helper.
+
+`preferred_until` is retained for compatibility with the smoltcp-style route model, but the initial lookup algorithm does not use it. This is also how current smoltcp behaves.
+
+## 3. Bounded route table
+
+- [x] Add fixed-capacity `RouteTable<const N: usize>`.
+- [x] Support `N = 0` for configurations that need no routes.
+- [x] No allocator required.
+- [x] Add `len`, `capacity`, and `is_empty`.
+- [x] Add route insertion.
+- [x] Return `RouteTableFull` when bounded storage is full.
+- [x] Add route removal by destination prefix.
+- [x] Add explicit expired-route pruning.
+
+This is intentionally simpler than an alloc-backed RIB. If a future router needs large/dynamic tables, that should live in router-specific code rather than making the core endpoint route table complicated.
+
+## 4. Lookup behavior
+
+- [x] Ignore expired routes.
+- [x] Match routes whose prefix contains the destination.
+- [x] Choose the matching route with the longest prefix.
+- [x] Return the selected next-hop GDP address.
+- [x] Fall back to `/0` when no more-specific route matches.
+- [x] Keep equal-prefix tie behavior simple and deterministic.
+- [x] Unit tests for longest-prefix lookup.
+- [x] Unit tests for expiry fallback.
+
+Do not add administrative distance, route origin, metrics, ECMP, policy routing, or per-interface selection to this table yet.
+
+## 5. Default-route helpers
+
+Equivalent to smoltcp's default-gateway convenience API:
+
+- [x] Add default route.
+- [x] Return the previous default route when replacing it.
+- [x] Get current default route.
+- [x] Remove current default route.
+- [x] Test replacement/removal behavior.
+
+## 6. Endpoint integration
+
+This is the next useful implementation work.
+
+- [ ] Decide where the route table belongs in `Endpoint` configuration/state.
+- [ ] Preserve direct point-to-point behavior when no route table is configured.
+- [ ] Allow an endpoint to configure a default router.
+- [ ] Allow an endpoint to add a more-specific static prefix route.
+- [ ] When sending to a non-local GDP destination, resolve the next-hop router through `RouteTable::lookup`.
+- [ ] Keep the packet's GDP destination unchanged; routing only chooses the next-hop link peer.
+- [ ] Ensure routing lookup does not leak into GTS semantics.
+- [ ] Add endpoint tests for:
+  - [ ] direct destination with no routing involved;
+  - [ ] default-router selection;
+  - [ ] more-specific route overriding default;
+  - [ ] expired specific route falling back to default;
+  - [ ] no route available.
+
+## 7. Route-table mutation API
+
+Keep this small and endpoint-oriented.
+
+- [ ] Decide whether callers need direct mutable access to the bounded table, similar to smoltcp `Routes::update`.
+- [ ] If useful, add a controlled `update` closure API without allocation.
+- [ ] Add tests ensuring mutation cannot corrupt `len` bookkeeping.
+
+Do not add a large route-management API until a real user requires it.
+
+## 8. Timing integration
+
+- [ ] Decide whether route expiry needs to participate in endpoint `poll_at` / `poll_delay`.
+- [ ] If not, document that expired routes are lazily ignored and optionally pruned by callers.
+- [ ] If yes, schedule only the earliest route expiry; do not add a general routing timer subsystem.
+
+## 9. Higher-level routed tests
+
+Only add enough test infrastructure to verify that normal endpoint traffic can use a configured next-hop.
+
+- [ ] Two endpoints with a simple forwarding test helper between them.
+- [ ] Verify GDP destination identity is preserved while next-hop selection changes.
+- [ ] Verify ordinary GTS traffic is unaffected by endpoint route lookup.
+- [ ] Verify a GTS request/response can traverse a simple routed test topology once forwarding support exists elsewhere.
+
+The forwarding helper may remain test-only. It is not evidence that `smolgnet` should grow into the production router implementation.
+
+## Explicitly deferred / out of scope
+
+The following belong in a future dedicated router/control-plane implementation unless a very small compatibility hook is required in `smolgnet`:
+
+- multi-interface router object;
+- interface handles in the route table;
+- connected-route management;
+- packet forwarding between interfaces;
+- route origin metadata;
+- administrative preference;
+- route metrics;
+- ECMP/load balancing;
+- source routing;
+- policy routing;
+- dynamic route exchange;
+- routing protocols;
+- RIB/FIB separation;
+- route redistribution;
+- GCTL routing errors generated by a router;
+- path Size-Class discovery;
+- router counters/telemetry;
+- hardware/P4 route programming;
+- GRouterD integration;
+- multicast/group routing;
+- NAT-like rewriting;
+- fragmentation/reassembly;
+- Ethernet bridging, ARP, or MAC neighbor discovery.
+
+## Current status
+
+The minimal smoltcp-like routing primitives now exist in `src/routing.rs`:
+
+```text
+GdpPrefix
+Route
+RouteTable<N>
+RouteTableFull
+```
+
+The next milestone is **Endpoint integration**, not a software router implementation.
