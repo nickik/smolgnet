@@ -60,20 +60,21 @@ impl EndpointRuntimeExt for Endpoint {
     }
 
     fn tick_at(&mut self, now: Instant) -> Result<usize> {
-        self.tick(now.total_millis())
+        let pruned = self.routes_mut().prune_expired(now);
+        let transport_work = self.tick(now.total_millis())?;
+        Ok(transport_work.saturating_add(pruned))
     }
 
     fn poll_at(&self, now: Instant) -> PollAt {
         if self.dlp().queued_flits() != 0 {
-            PollAt::Now
-        } else {
-            // The existing alloc-backed GTS implementation currently exposes
-            // its RTO but not each stream's absolute deadline. Waking once per
-            // RTO is conservative and correct; ingress may wake the runtime
-            // earlier. When routing work touches the GTS scheduler, this can
-            // be refined to the minimum outstanding stream deadline without
-            // changing the runtime API.
-            PollAt::Time(now + Duration::from_millis(DEFAULT_RTO_MS))
+            return PollAt::Now;
+        }
+
+        let transport_deadline = now + Duration::from_millis(DEFAULT_RTO_MS);
+        match self.routes().next_expiry() {
+            Some(expiry) if expiry <= now => PollAt::Now,
+            Some(expiry) if expiry < transport_deadline => PollAt::Time(expiry),
+            _ => PollAt::Time(transport_deadline),
         }
     }
 
@@ -159,7 +160,6 @@ mod async_support {
         pub fn recv(&mut self, tunnel: TunnelHandle, stream_id: u8) -> Result<Option<alloc::vec::Vec<u8>>> {
             let result = self.endpoint.recv(tunnel, stream_id)?;
             if result.is_some() {
-                // Consuming a reliable message may queue a fresh receive-credit ACK.
                 self.tx_waker.wake();
             }
             Ok(result)
@@ -201,13 +201,36 @@ pub use self::async_support::{AsyncEndpoint, WakerRegistration};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EndpointConfig, GdpAddress};
+    use crate::{EndpointConfig, GdpAddress, GdpPrefix, Route};
 
     #[test]
     fn idle_endpoint_has_conservative_timer_deadline() {
         let ep = Endpoint::new(GdpAddress(1), EndpointConfig::new(128)).unwrap();
         let now = Instant::from_millis(1000);
         assert_eq!(ep.poll_delay(now), Some(Duration::from_millis(DEFAULT_RTO_MS)));
+    }
+
+    #[test]
+    fn route_expiry_preempts_transport_timer_and_tick_prunes_it() {
+        let mut ep = Endpoint::new(GdpAddress(1), EndpointConfig::new(128)).unwrap();
+        let mut route = Route::new(
+            GdpPrefix::new(GdpAddress(0x1234_0000_0000_0000), 16).unwrap(),
+            GdpAddress(2),
+        );
+        route.expires_at = Some(Instant::from_millis(1250));
+        ep.routes_mut().add(route).unwrap();
+
+        let now = Instant::from_millis(1000);
+        assert_eq!(ep.poll_at(now), PollAt::Time(Instant::from_millis(1250)));
+        assert_eq!(ep.poll_delay(now), Some(Duration::from_millis(250)));
+        assert_eq!(ep.poll_at(Instant::from_millis(1250)), PollAt::Now);
+
+        assert_eq!(ep.tick_at(Instant::from_millis(1251)).unwrap(), 1);
+        assert!(ep.routes().is_empty());
+        assert_eq!(
+            ep.poll_delay(Instant::from_millis(1251)),
+            Some(Duration::from_millis(DEFAULT_RTO_MS))
+        );
     }
 
     #[cfg(feature = "async")]
