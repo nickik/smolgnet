@@ -110,12 +110,16 @@ pub fn parse_gdp(bytes: &[u8]) -> Result<ParsedGdp, P4GdpError> {
         return Err(P4GdpError::ParserRejected);
     }
 
-    let version = hdr.base.version.load_le::<u8>();
-    let packet_type = hdr.base.packet_type.load_le::<u8>();
-    let size_class = hdr.base.size_class.load_le::<u8>();
-    let reserved = hdr.base.reserved.load_le::<u8>();
-    let crc8 = hdr.base.crc8.load_le::<u8>();
-    let raw_hop = hdr.base.hop.load_le::<u8>();
+    // x4c stores <=8-bit fields directly as Msb0 network-order bit vectors.
+    // Wider fields are byte-reversed by its generated Header::set(), so they
+    // continue to use load_le below. Keeping this distinction here makes the
+    // adapter explicit and catches x4c representation changes in conformance CI.
+    let version = hdr.base.version.load_be::<u8>();
+    let packet_type = hdr.base.packet_type.load_be::<u8>();
+    let size_class = hdr.base.size_class.load_be::<u8>();
+    let reserved = hdr.base.reserved.load_be::<u8>();
+    let crc8 = hdr.base.crc8.load_be::<u8>();
+    let raw_hop = hdr.base.hop.load_be::<u8>();
 
     let addresses = if local_form {
         ParsedAddresses::Local {
