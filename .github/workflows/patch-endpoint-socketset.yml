@@ -36,37 +36,21 @@ jobs:
                   raise SystemExit('alloc_tunnel anchor not found')
               s = s.replace(anchor, helper, 1)
 
-          # Common one-line keyed map lookups.
           s = re.sub(r'self\.tunnels\.get_mut\(&([^\)]+)\)\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record_mut(\1)?', s)
           s = re.sub(r'self\.tunnels\.get\(&([^\)]+)\)\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record(\1)?', s)
+          s = re.sub(r'self\.tunnels\s*\.get_mut\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record_mut(\1)?', s)
+          s = re.sub(r'self\.tunnels\s*\.get\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?', r'self.tunnel_record(\1)?', s)
 
-          # Multiline chained lookups.
-          s = re.sub(
-              r'self\.tunnels\s*\.get_mut\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?',
-              r'self.tunnel_record_mut(\1)?',
-              s,
-          )
-          s = re.sub(
-              r'self\.tunnels\s*\.get\(&([^\)]+)\)\s*\.ok_or\(Error::UnknownTunnel\)\?',
-              r'self.tunnel_record(\1)?',
-              s,
-          )
-
-          # BTreeMap inserts become SocketSet adds. Wire-level TunnelHandle stays
-          # the receiver-local tunnel id; SocketHandle remains internal.
-          s = s.replace(
-              'self.tunnels.insert(local, TunnelRecord { peer: remote, tunnel });',
-              'self.tunnels.add(TunnelRecord { peer: remote, tunnel })?;',
-          )
-          s = s.replace(
-              'self.tunnels.insert(local, TunnelRecord { peer: src, tunnel });',
-              'self.tunnels.add(TunnelRecord { peer: src, tunnel })?;',
-          )
+          s = s.replace('self.tunnels.insert(local, TunnelRecord { peer: remote, tunnel });', 'self.tunnels.add(TunnelRecord { peer: remote, tunnel })?;')
+          s = s.replace('self.tunnels.insert(local, TunnelRecord { peer: src, tunnel });', 'self.tunnels.add(TunnelRecord { peer: src, tunnel })?;')
           s = s.replace('for rec in self.tunnels.values_mut() {', 'for (_, rec) in self.tunnels.iter_mut() {')
 
-          # Fail if old keyed-map operations remain; iteration/storage type lines
-          # are intentionally allowed.
-          bad = [line for line in s.splitlines() if 'self.tunnels.get' in line or 'self.tunnels.insert' in line or 'self.tunnels.values' in line]
+          bad = []
+          for line in s.splitlines():
+              if 'self.tunnels.insert' in line or 'self.tunnels.values' in line:
+                  bad.append(line)
+              if ('self.tunnels.get(' in line or 'self.tunnels.get_mut(' in line) and '(handle)' not in line:
+                  bad.append(line)
           if bad:
               raise SystemExit('unmigrated tunnel operations: ' + repr(bad))
           p.write_text(s)
