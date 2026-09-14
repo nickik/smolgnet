@@ -3,8 +3,6 @@ use crate::error::Result;
 use crate::gts::DEFAULT_RTO_MS;
 use crate::link::{Flit, GnetFrame};
 use crate::time::{Duration, Instant, PollAt};
-use crate::wire::gdp::GdpAddress;
-use crate::wire::gts::StreamProfile;
 
 /// Typed-time extension methods for the alloc-backed endpoint.
 ///
@@ -69,9 +67,12 @@ impl EndpointRuntimeExt for Endpoint {
         if self.dlp().queued_flits() != 0 {
             PollAt::Now
         } else {
-            // Conservative until per-stream timer deadlines are surfaced from
-            // the alloc-backed GTS state machine. Polling once per RTO is
-            // always correct and still lets ingress wake the runtime sooner.
+            // The existing alloc-backed GTS implementation currently exposes
+            // its RTO but not each stream's absolute deadline. Waking once per
+            // RTO is conservative and correct; ingress may wake the runtime
+            // earlier. When routing work touches the GTS scheduler, this can
+            // be refined to the minimum outstanding stream deadline without
+            // changing the runtime API.
             PollAt::Time(now + Duration::from_millis(DEFAULT_RTO_MS))
         }
     }
@@ -86,8 +87,7 @@ mod async_support {
     use core::ops::{Deref, DerefMut};
     use core::task::Waker;
 
-    use super::*;
-    use crate::error::{Error, Result};
+    use super::{Duration, Endpoint, EndpointRuntimeExt, Flit, GnetFrame, Instant, PollAt, Result, TunnelHandle};
 
     #[derive(Debug, Default)]
     pub struct WakerRegistration {
@@ -193,13 +193,10 @@ mod async_support {
     impl DerefMut for AsyncEndpoint {
         fn deref_mut(&mut self) -> &mut Self::Target { &mut self.endpoint }
     }
-
-    pub use AsyncEndpoint as PublicAsyncEndpoint;
-    pub use WakerRegistration as PublicWakerRegistration;
 }
 
 #[cfg(feature = "async")]
-pub use async_support::{PublicAsyncEndpoint as AsyncEndpoint, PublicWakerRegistration as WakerRegistration};
+pub use self::async_support::{AsyncEndpoint, WakerRegistration};
 
 #[cfg(test)]
 mod tests {
@@ -211,5 +208,28 @@ mod tests {
         let ep = Endpoint::new(GdpAddress(1), EndpointConfig::new(128)).unwrap();
         let now = Instant::from_millis(1000);
         assert_eq!(ep.poll_delay(now), Some(Duration::from_millis(DEFAULT_RTO_MS)));
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn waker_registration_is_one_shot_and_wakes() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::task::{Wake, Waker};
+
+        struct Counter(AtomicUsize);
+        impl Wake for Counter {
+            fn wake(self: Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
+        }
+
+        let counter = Arc::new(Counter(AtomicUsize::new(0)));
+        let waker = Waker::from(counter.clone());
+        let mut reg = WakerRegistration::new();
+        reg.register(&waker);
+        reg.register(&waker);
+        reg.wake();
+        assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+        reg.wake();
+        assert_eq!(counter.0.load(Ordering::SeqCst), 1);
     }
 }
