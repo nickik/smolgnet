@@ -32,10 +32,12 @@ The script:
 
 1. creates `smolgnet-br0`;
 2. creates `smolgnet-tap0` and `smolgnet-tap1` owned by the current user;
-3. assigns deterministic locally administered MAC addresses;
+3. assigns deterministic Linux host-side TAP MAC addresses;
 4. attaches both TAPs to the bridge;
 5. runs the ignored `tests/host_tap.rs` integration test;
 6. removes the TAPs and bridge on exit.
+
+The Linux TAP-interface MACs deliberately differ from the logical MAC addresses used by the private test envelope. The TAP interfaces are bridge ports; the logical test endpoints conceptually live behind those ports. Reusing the same MAC for both roles causes the Linux bridge to classify the destination as local to the host instead of forwarding it to the peer TAP file descriptor.
 
 The Rust test sends a data QDX-GNET frame A -> B and a control QDX-GNET frame B -> A and requires byte-for-byte and metadata equality after traversing the Linux TAP/bridge path.
 
@@ -58,7 +60,7 @@ cargo test --all-targets --features host-tap
 
 The real kernel test is marked ignored because it requires TAP creation privileges. `scripts/test-tap.sh` supplies the topology and invokes it with `--ignored`.
 
-CI attempts both levels: the ordinary codec/build tests and the real Linux TAP path on the Ubuntu runner.
+CI runs both levels: the ordinary codec/build tests and the real Linux TAP path on the Ubuntu runner.
 
 ## Filtering unrelated host traffic
 
