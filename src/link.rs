@@ -298,23 +298,70 @@ impl DlpEndpoint {
         Ok(n)
     }
 
-    pub fn poll_tx(&mut self) -> Result<Option<Flit>> {
+    /// Fill `out` with as many currently sendable flits as possible.
+    ///
+    /// Control traffic retains priority, but a blocked control queue does not
+    /// prevent data traffic with available data credit from filling the rest
+    /// of the burst. Credits are consumed in one accounting operation per
+    /// queue rather than one public API crossing per physical flit.
+    pub fn poll_tx_burst(&mut self, out: &mut [Flit]) -> Result<usize> {
         if !self.link_up {
             return Err(Error::LinkDown);
         }
-
-        if !self.control_tx_queue.is_empty() && self.control_tx_credit > 0 {
-            self.control_tx_credit -= 1;
-            return Ok(self.control_tx_queue.pop_front());
+        if out.is_empty() {
+            return Ok(0);
         }
-        if !self.data_tx_queue.is_empty() && self.data_tx_credit > 0 {
-            self.data_tx_credit -= 1;
-            return Ok(self.data_tx_queue.pop_front());
+
+        let mut written = 0usize;
+
+        let control_n = out
+            .len()
+            .min(self.control_tx_queue.len())
+            .min(self.control_tx_credit as usize);
+        for slot in &mut out[..control_n] {
+            *slot = self
+                .control_tx_queue
+                .pop_front()
+                .expect("control burst count matched queue length");
+        }
+        self.control_tx_credit -= control_n as u32;
+        written += control_n;
+
+        let data_room = out.len() - written;
+        let data_n = data_room
+            .min(self.data_tx_queue.len())
+            .min(self.data_tx_credit as usize);
+        for slot in &mut out[written..written + data_n] {
+            *slot = self
+                .data_tx_queue
+                .pop_front()
+                .expect("data burst count matched queue length");
+        }
+        self.data_tx_credit -= data_n as u32;
+        written += data_n;
+
+        if written != 0 {
+            return Ok(written);
         }
         if self.control_tx_queue.is_empty() && self.data_tx_queue.is_empty() {
-            return Ok(None);
+            Ok(0)
+        } else {
+            Err(Error::NoCredit)
         }
-        Err(Error::NoCredit)
+    }
+
+    /// Compatibility one-flit API. Native devices should prefer
+    /// `poll_tx_burst` so a NIC/driver boundary can transfer many flits at once.
+    pub fn poll_tx(&mut self) -> Result<Option<Flit>> {
+        let mut one = [Flit {
+            vcid: Vcid::CONTROL,
+            data: 0,
+        }];
+        match self.poll_tx_burst(&mut one)? {
+            0 => Ok(None),
+            1 => Ok(Some(one[0])),
+            _ => unreachable!(),
+        }
     }
 
     fn release_data_segment(&mut self, flits: usize) {
@@ -400,6 +447,23 @@ impl DlpEndpoint {
                 Err(e)
             }
         }
+    }
+
+    /// Process a slice of physical flits and append every completed GDP packet
+    /// to `packets`. This keeps the device-facing API burst-oriented while the
+    /// current GDP reassembly logic remains deliberately simple.
+    pub fn receive_burst(
+        &mut self,
+        flits: &[Flit],
+        packets: &mut Vec<GdpPacket>,
+    ) -> Result<usize> {
+        let before = packets.len();
+        for &flit in flits {
+            if let Some(packet) = self.receive(flit)? {
+                packets.push(packet);
+            }
+        }
+        Ok(packets.len() - before)
     }
 
     pub fn reset_vc(&mut self, vcid: Vcid) -> Result<()> {
