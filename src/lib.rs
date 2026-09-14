@@ -5,6 +5,7 @@ extern crate alloc;
 
 pub mod bounded_gts;
 pub mod error;
+pub mod routing;
 pub mod socket;
 pub mod storage;
 pub mod time;
@@ -35,6 +36,9 @@ pub use bounded_gts::{
     TunnelRole as BoundedTunnelRole, TunnelState as BoundedTunnelState, TxMeta,
 };
 pub use error::{Error, Result};
+pub use routing::{
+    GdpPrefix, InterfaceHandle, PrefixLengthError, Route, RouteOrigin, RouteTable, RouteTableFull,
+};
 pub use socket::{SocketHandle, SocketSet, SocketStorage};
 #[cfg(feature = "alloc")]
 pub use socket::OwnedSocketSet;
