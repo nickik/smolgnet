@@ -17,6 +17,9 @@ std = []
 
 [dependencies]
 
+[dev-dependencies]
+smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
+
 [[test]]
 name = "wire"
 path = "tests/wire.rs"
@@ -36,3 +39,11 @@ path = "tests/endpoint.rs"
 [[test]]
 name = "behavior"
 path = "tests/behavior.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "performance"
+path = "tests/performance.rs"
