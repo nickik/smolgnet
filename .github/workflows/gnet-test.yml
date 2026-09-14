@@ -2,7 +2,7 @@ name: GNet point-to-point
 
 on:
   push:
-    branches: [main, gnet-point-to-point]
+    branches: [main, gnet-point-to-point, p4-smolgnet-dataplane]
   pull_request:
   workflow_dispatch:
 
@@ -14,6 +14,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test GNet stack
         run: cargo test --all-targets
+      - name: Test GNet stack with x4c GDP differential decoder
+        run: cargo test --all-targets --features p4-gdp-compare
       - name: Check no-std + alloc build
         run: cargo check --no-default-features
       - name: Compare 1 MiB smolgnet and smoltcp loopback
