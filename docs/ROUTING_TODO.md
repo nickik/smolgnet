@@ -132,30 +132,38 @@ GDP has no fragmentation, so routing must not inherit smoltcp's fragmentation ma
 - [ ] Provide explicit pruning for long-running routers.
 - [ ] Route-table changes wake blocked transmitters where async support is enabled.
 
-## 11. Native virtual-NIC routing tests
+## 11. Routing integration tests
 
-Do not use TUN or TAP for GNet routing tests. TUN is an IP-layer kernel interface and TAP is an Ethernet-layer kernel interface; both introduce a host protocol that GNet does not use.
+Production routing code must know only the normal `GnetFrameDevice` / DLP interfaces. Test transports belong under `tests/support`; do not add host-only IPC or virtual-NIC implementations to `src/`.
 
-Use paired `VirtualNic` devices carrying native `GnetFrame` values directly:
+Two useful test backends now exist only in test support:
+
+- an in-process bounded virtual NIC pair for deterministic unit/integration tests;
+- an AF_UNIX `SOCK_SEQPACKET` NIC for running two smolgnet endpoints in separate host processes while preserving one native GNet/QDX frame per IPC record.
+
+Neither backend uses IP, Ethernet, TUN, TAP, MAC addressing, or a host network protocol. The tiny seqpacket record wrapper is host-test metadata only and is not part of GNet.
+
+Target routed topology:
 
 ```text
 Endpoint A
    |
-VirtualNic A0 ===== VirtualNic R0
-                         |
-                    router ingress
-                         |
-                    GDP route lookup
-                         |
-                    router egress
-                         |
-VirtualNic R1 ===== VirtualNic B0
+test NIC A0 ===== test NIC R0
+                        |
+                   router ingress
+                        |
+                   GDP route lookup
+                        |
+                   router egress
+                        |
+test NIC R1 ===== test NIC B0
    |
 Endpoint B
 ```
 
-- [ ] Two-interface software router with one native `GnetFrameDevice` per interface.
+- [ ] Two-interface software router with one `GnetFrameDevice` per interface.
 - [ ] Endpoint A -> router -> Endpoint B forwarding test.
+- [ ] Run the basic routed test first in-process, then with process-separated seqpacket endpoints/router where useful.
 - [ ] Verify longest-prefix selection with two possible egress links.
 - [ ] Verify default route.
 - [ ] Verify no-route GCTL error.
@@ -163,10 +171,8 @@ Endpoint B
 - [ ] Verify Local GDP on one side can forward as Global GDP on another side and retain canonical identities.
 - [ ] Verify GTS tunnel traffic survives packet-by-packet routing.
 - [ ] Verify reliable GTS retransmission through a routed loss/fault scenario.
-- [ ] Verify bounded virtual-NIC queues apply backpressure rather than silently dropping frames.
+- [ ] Verify bounded test queues apply backpressure rather than silently dropping frames.
 - [ ] Verify interface-down state withdraws/invalidates connected forwarding paths.
-
-If process isolation is later useful, add a separate `GnetFrameDevice` backend over Unix-domain `SOCK_SEQPACKET`. That is host IPC only; it must carry the same native frame representation and must not change GDP/DLP semantics.
 
 ## 12. Router-facing API
 
@@ -193,13 +199,14 @@ Not part of the initial routing implementation, but the static design must leave
 ## Explicit non-goals for the first routing milestone
 
 - raw GDP application sockets
-- TUN/TAP-based GNet test transport
+- TUN/TAP-based GNet transport
 - Ethernet bridging
 - ARP or MAC neighbor discovery
 - packet fragmentation/reassembly
 - multicast/group routing
 - dynamic routing protocol
 - NAT-like address rewriting
+- promoting test-only VirtualNic/seqpacket implementations into the public library
 
 The first target should be deliberately small:
 
@@ -214,7 +221,7 @@ GDP Hop Limit forwarding
         +
 GCTL forwarding errors
         +
-native VirtualNic routed integration tests
+test-only native-frame integration harnesses
 ```
 
 Once this works reliably, dynamic routing can be reconsidered as a separate protocol/control-plane component.
