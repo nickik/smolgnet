@@ -62,6 +62,25 @@ pub enum LinkTraffic {
     Data,
 }
 
+/// A complete DLP/GNET frame at the QDX-GNET-style host/device boundary.
+///
+/// The bytes are the actual encoded GDP frame. `vcid` and `traffic` are
+/// link-local metadata used by the software model; GDP/GCTL/GTS do not see or
+/// select them. A real QDX-GNET controller can keep the equivalent state in
+/// hardware while DMA moves the contiguous frame buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GnetFrame {
+    pub vcid: Vcid,
+    pub traffic: LinkTraffic,
+    pub bytes: Vec<u8>,
+}
+
+impl GnetFrame {
+    pub fn flit_len(&self) -> usize {
+        (self.bytes.len() + 3) / 4
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DlpConfig {
     pub gdp: GdpWireConfig,
@@ -91,6 +110,52 @@ impl DlpConfig {
 }
 
 #[derive(Debug, Clone)]
+struct TxFrame {
+    vcid: Vcid,
+    traffic: LinkTraffic,
+    bytes: Vec<u8>,
+    /// Raw-flit backends advance this cursor. The normal QDX frame path keeps
+    /// it at zero and moves the complete buffer in one operation.
+    flit_offset: usize,
+}
+
+impl TxFrame {
+    fn flit_len(&self) -> usize {
+        (self.bytes.len() + 3) / 4
+    }
+
+    fn remaining_flits(&self) -> usize {
+        self.flit_len().saturating_sub(self.flit_offset)
+    }
+
+    fn next_flit(&mut self) -> Option<Flit> {
+        if self.flit_offset >= self.flit_len() {
+            return None;
+        }
+        let start = self.flit_offset * 4;
+        let end = (start + 4).min(self.bytes.len());
+        let mut word = [0u8; 4];
+        word[..end - start].copy_from_slice(&self.bytes[start..end]);
+        self.flit_offset += 1;
+        Some(Flit {
+            vcid: self.vcid,
+            data: u32::from_be_bytes(word),
+        })
+    }
+
+    fn into_frame(self) -> Result<GnetFrame> {
+        if self.flit_offset != 0 {
+            return Err(Error::InvalidState);
+        }
+        Ok(GnetFrame {
+            vcid: self.vcid,
+            traffic: self.traffic,
+            bytes: self.bytes,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 struct RxSegment {
     bytes: Vec<u8>,
     expected_bytes: usize,
@@ -112,8 +177,8 @@ pub struct DlpEndpoint {
     data_credit_outstanding: u32,
     data_rx_in_use: u32,
 
-    control_tx_queue: VecDeque<Flit>,
-    data_tx_queue: VecDeque<Flit>,
+    control_tx_queue: VecDeque<TxFrame>,
+    data_tx_queue: VecDeque<TxFrame>,
     rx: [Option<RxSegment>; 4],
     desynchronized: [bool; 4],
     next_data_vc: u8,
@@ -186,8 +251,6 @@ impl DlpEndpoint {
             .saturating_sub(self.data_credit_outstanding)
     }
 
-    /// Records that a GCTL CREDIT message advertising `count` flits has been
-    /// queued. The advertised window cannot exceed actual free receive space.
     pub fn note_data_credit_granted(&mut self, count: u32) -> Result<()> {
         if count > self.grantable_data_credit() {
             return Err(Error::BufferFull);
@@ -196,14 +259,10 @@ impl DlpEndpoint {
         Ok(())
     }
 
-    /// Adds receive capacity learned from the peer via GCTL CREDIT.
     pub fn grant_data_tx_credit(&mut self, count: u32) {
         self.data_tx_credit = self.data_tx_credit.saturating_add(count);
     }
 
-    /// The control lane has a statically provisioned sliding window. Direct
-    /// point-to-point link glue uses this to seed/refund the window; GCTL data
-    /// CREDIT messages do not modify it.
     pub fn grant_control_tx_credit(&mut self, count: u32) {
         self.control_tx_credit = self.control_tx_credit.saturating_add(count);
     }
@@ -226,16 +285,20 @@ impl DlpEndpoint {
         }
     }
 
+    fn queue_flits(queue: &VecDeque<TxFrame>) -> usize {
+        queue.iter().map(TxFrame::remaining_flits).sum()
+    }
+
     pub fn queued_flits(&self) -> usize {
-        self.control_tx_queue.len() + self.data_tx_queue.len()
+        Self::queue_flits(&self.control_tx_queue) + Self::queue_flits(&self.data_tx_queue)
     }
 
     pub fn queued_data_flits(&self) -> usize {
-        self.data_tx_queue.len()
+        Self::queue_flits(&self.data_tx_queue)
     }
 
     pub fn queued_control_flits(&self) -> usize {
-        self.control_tx_queue.len()
+        Self::queue_flits(&self.control_tx_queue)
     }
 
     fn choose_data_vc(&mut self) -> Vcid {
@@ -257,9 +320,7 @@ impl DlpEndpoint {
         self.queue_packet_on(LinkTraffic::Data, vc, packet)
     }
 
-    /// Low-level explicit-VC entry point used by DLP tests and later router
-    /// code. Endpoint/GDP/GTS code should use queue_control_packet or
-    /// queue_data_packet instead.
+    /// Queue one encoded GDP frame without pre-materializing physical flits.
     pub fn queue_packet_on(
         &mut self,
         traffic: LinkTraffic,
@@ -281,29 +342,95 @@ impl DlpEndpoint {
 
         let bytes = packet.encode(self.cfg)?;
         let n = (bytes.len() + 3) / 4;
-        let queue = match traffic {
-            LinkTraffic::Control => &mut self.control_tx_queue,
-            LinkTraffic::Data => &mut self.data_tx_queue,
+        let frame = TxFrame {
+            vcid,
+            traffic,
+            bytes,
+            flit_offset: 0,
         };
-        for i in 0..n {
-            let start = i * 4;
-            let mut b = [0u8; 4];
-            let end = (start + 4).min(bytes.len());
-            b[..end - start].copy_from_slice(&bytes[start..end]);
-            queue.push_back(Flit {
-                vcid,
-                data: u32::from_be_bytes(b),
-            });
+        match traffic {
+            LinkTraffic::Control => self.control_tx_queue.push_back(frame),
+            LinkTraffic::Data => self.data_tx_queue.push_back(frame),
         }
         Ok(n)
     }
 
-    /// Fill `out` with as many currently sendable flits as possible.
+    fn pop_sendable_frame(
+        queue: &mut VecDeque<TxFrame>,
+        credit: &mut u32,
+    ) -> Result<Option<GnetFrame>> {
+        let Some(front) = queue.front() else {
+            return Ok(None);
+        };
+        if front.flit_offset != 0 {
+            return Err(Error::InvalidState);
+        }
+        let needed = front.flit_len();
+        if needed > *credit as usize {
+            return Ok(None);
+        }
+        *credit -= needed as u32;
+        queue
+            .pop_front()
+            .expect("front frame existed")
+            .into_frame()
+            .map(Some)
+    }
+
+    /// QDX-GNET-style whole-frame transmit path.
     ///
-    /// Control traffic retains priority, but a blocked control queue does not
-    /// prevent data traffic with available data credit from filling the rest
-    /// of the burst. Credits are consumed in one accounting operation per
-    /// queue rather than one public API crossing per physical flit.
+    /// This is the normal software/device boundary. It preserves DLP credit
+    /// accounting but does not create one Rust object/API transition per flit.
+    pub fn poll_tx_frame(&mut self) -> Result<Option<GnetFrame>> {
+        if !self.link_up {
+            return Err(Error::LinkDown);
+        }
+
+        if let Some(frame) = Self::pop_sendable_frame(
+            &mut self.control_tx_queue,
+            &mut self.control_tx_credit,
+        )? {
+            return Ok(Some(frame));
+        }
+        if let Some(frame) =
+            Self::pop_sendable_frame(&mut self.data_tx_queue, &mut self.data_tx_credit)?
+        {
+            return Ok(Some(frame));
+        }
+
+        if self.control_tx_queue.is_empty() && self.data_tx_queue.is_empty() {
+            Ok(None)
+        } else {
+            Err(Error::NoCredit)
+        }
+    }
+
+    fn emit_queue_flits(
+        queue: &mut VecDeque<TxFrame>,
+        credit: &mut u32,
+        out: &mut [Flit],
+    ) -> usize {
+        let mut written = 0usize;
+        while written < out.len() && *credit != 0 {
+            let Some(front) = queue.front_mut() else {
+                break;
+            };
+            let Some(flit) = front.next_flit() else {
+                queue.pop_front();
+                continue;
+            };
+            out[written] = flit;
+            written += 1;
+            *credit -= 1;
+            if front.remaining_flits() == 0 {
+                queue.pop_front();
+            }
+        }
+        written
+    }
+
+    /// Raw-flit backend API. Flits are materialized lazily from contiguous
+    /// queued frames only when a raw physical/simulation backend asks for them.
     pub fn poll_tx_burst(&mut self, out: &mut [Flit]) -> Result<usize> {
         if !self.link_up {
             return Err(Error::LinkDown);
@@ -312,33 +439,17 @@ impl DlpEndpoint {
             return Ok(0);
         }
 
-        let mut written = 0usize;
-
-        let control_n = out
-            .len()
-            .min(self.control_tx_queue.len())
-            .min(self.control_tx_credit as usize);
-        for slot in &mut out[..control_n] {
-            *slot = self
-                .control_tx_queue
-                .pop_front()
-                .expect("control burst count matched queue length");
-        }
-        self.control_tx_credit -= control_n as u32;
-        written += control_n;
-
-        let data_room = out.len() - written;
-        let data_n = data_room
-            .min(self.data_tx_queue.len())
-            .min(self.data_tx_credit as usize);
-        for slot in &mut out[written..written + data_n] {
-            *slot = self
-                .data_tx_queue
-                .pop_front()
-                .expect("data burst count matched queue length");
-        }
-        self.data_tx_credit -= data_n as u32;
-        written += data_n;
+        let control_n = Self::emit_queue_flits(
+            &mut self.control_tx_queue,
+            &mut self.control_tx_credit,
+            out,
+        );
+        let data_n = Self::emit_queue_flits(
+            &mut self.data_tx_queue,
+            &mut self.data_tx_credit,
+            &mut out[control_n..],
+        );
+        let written = control_n + data_n;
 
         if written != 0 {
             return Ok(written);
@@ -350,8 +461,6 @@ impl DlpEndpoint {
         }
     }
 
-    /// Compatibility one-flit API. Native devices should prefer
-    /// `poll_tx_burst` so a NIC/driver boundary can transfer many flits at once.
     pub fn poll_tx(&mut self) -> Result<Option<Flit>> {
         let mut one = [Flit {
             vcid: Vcid::CONTROL,
@@ -368,6 +477,41 @@ impl DlpEndpoint {
         self.data_rx_in_use = self.data_rx_in_use.saturating_sub(flits as u32);
     }
 
+    /// QDX-GNET-style whole-frame receive path.
+    pub fn receive_frame(&mut self, frame: GnetFrame) -> Result<GdpPacket> {
+        if !self.link_up {
+            return Err(Error::LinkDown);
+        }
+        if frame.vcid.get() >= self.vc_mode.count() {
+            return Err(Error::InvalidField);
+        }
+        if frame.traffic == LinkTraffic::Control && !frame.vcid.is_control() {
+            return Err(Error::InvalidField);
+        }
+        if frame.traffic == LinkTraffic::Data && frame.vcid.is_control() {
+            return Err(Error::InvalidField);
+        }
+
+        let flits = frame.flit_len();
+        if frame.traffic == LinkTraffic::Data {
+            if self.data_credit_outstanding < flits as u32 {
+                return Err(Error::CreditViolation);
+            }
+            if self.available_rx_flits() < flits as u32 {
+                return Err(Error::BufferFull);
+            }
+            self.data_credit_outstanding -= flits as u32;
+            self.data_rx_in_use += flits as u32;
+        }
+
+        let decoded = GdpPacket::decode(&frame.bytes, self.cfg, self.local_prefix);
+        if frame.traffic == LinkTraffic::Data {
+            self.release_data_segment(flits);
+        }
+        decoded
+    }
+
+    /// Raw physical-flit receive path.
     pub fn receive(&mut self, flit: Flit) -> Result<Option<GdpPacket>> {
         if !self.link_up {
             return Err(Error::LinkDown);
@@ -449,9 +593,6 @@ impl DlpEndpoint {
         }
     }
 
-    /// Process a slice of physical flits and append every completed GDP packet
-    /// to `packets`. This keeps the device-facing API burst-oriented while the
-    /// current GDP reassembly logic remains deliberately simple.
     pub fn receive_burst(
         &mut self,
         flits: &[Flit],
