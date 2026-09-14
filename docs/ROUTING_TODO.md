@@ -93,27 +93,26 @@ Equivalent to smoltcp's default-gateway convenience API:
 
 ## 6. Endpoint integration
 
-This is the next useful implementation work.
+- [x] Give `Endpoint` a small fixed-capacity route table.
+- [x] Preserve direct point-to-point behavior when the route table is empty.
+- [x] Allow an endpoint to configure a default router through `routes_mut()`.
+- [x] Allow an endpoint to add a more-specific static prefix route.
+- [x] Add endpoint-level next-hop lookup with `Endpoint::route(destination, now)`.
+- [x] Keep route lookup outside GTS semantics.
+- [x] Test more-specific route overriding default.
+- [x] Test empty/no-route behavior.
+- [ ] Integrate route selection into packet TX once direct/on-link destination semantics are explicitly defined.
+- [ ] Keep the packet's GDP destination unchanged when TX starts using a selected next hop.
+- [ ] Add an endpoint-level expiry fallback test.
 
-- [ ] Decide where the route table belongs in `Endpoint` configuration/state.
-- [ ] Preserve direct point-to-point behavior when no route table is configured.
-- [ ] Allow an endpoint to configure a default router.
-- [ ] Allow an endpoint to add a more-specific static prefix route.
-- [ ] When sending to a non-local GDP destination, resolve the next-hop router through `RouteTable::lookup`.
-- [ ] Keep the packet's GDP destination unchanged; routing only chooses the next-hop link peer.
-- [ ] Ensure routing lookup does not leak into GTS semantics.
-- [ ] Add endpoint tests for:
-  - [ ] direct destination with no routing involved;
-  - [ ] default-router selection;
-  - [ ] more-specific route overriding default;
-  - [ ] expired specific route falling back to default;
-  - [ ] no route available.
+The current route API is intentionally advisory: `Endpoint::route()` returns a configured next-hop router, while ordinary point-to-point transmission remains unchanged. This avoids inventing an on-link-prefix rule just to force route lookup into TX.
 
 ## 7. Route-table mutation API
 
 Keep this small and endpoint-oriented.
 
-- [ ] Decide whether callers need direct mutable access to the bounded table, similar to smoltcp `Routes::update`.
+- [x] Expose direct immutable/mutable access with `routes()` / `routes_mut()`.
+- [ ] Decide whether a smoltcp-style `update` closure adds enough value beyond direct bounded-table access.
 - [ ] If useful, add a controlled `update` closure API without allocation.
 - [ ] Add tests ensuring mutation cannot corrupt `len` bookkeeping.
 
@@ -166,13 +165,16 @@ The following belong in a future dedicated router/control-plane implementation u
 
 ## Current status
 
-The minimal smoltcp-like routing primitives now exist in `src/routing.rs`:
+The minimal smoltcp-like routing primitives exist in `src/routing.rs`, and `Endpoint` now owns a small route table:
 
 ```text
 GdpPrefix
 Route
 RouteTable<N>
 RouteTableFull
+Endpoint::routes()
+Endpoint::routes_mut()
+Endpoint::route()
 ```
 
-The next milestone is **Endpoint integration**, not a software router implementation.
+The next routing-specific step is to define **on-link/direct-destination semantics** before allowing transmit paths to automatically substitute a configured next hop.
