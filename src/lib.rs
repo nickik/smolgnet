@@ -43,9 +43,7 @@ pub use bounded_gts::{
     TunnelRole as BoundedTunnelRole, TunnelState as BoundedTunnelState, TxMeta,
 };
 pub use error::{Error, Result};
-pub use routing::{
-    GdpPrefix, InterfaceHandle, PrefixLengthError, Route, RouteOrigin, RouteTable, RouteTableFull,
-};
+pub use routing::{GdpPrefix, PrefixLengthError, Route, RouteTable, RouteTableFull};
 pub use socket::{SocketHandle, SocketSet, SocketStorage};
 #[cfg(feature = "alloc")]
 pub use socket::OwnedSocketSet;
