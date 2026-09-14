@@ -20,6 +20,8 @@ pub mod gts;
 pub mod link;
 #[cfg(feature = "p4-gdp")]
 pub mod p4_gdp;
+#[cfg(feature = "p4-gts")]
+pub mod p4_gts;
 #[cfg(feature = "alloc")]
 pub mod qdx;
 #[cfg(feature = "alloc")]
