@@ -14,6 +14,8 @@ pub use core::{
     make_link_local, AddressAuthorityConfig, AddressState, EndpointConfig,
     ListenerConfig, TunnelHandle, BOOTSTRAP_ADDRESS, LINK_LOCAL_PREFIX,
 };
+#[doc(hidden)]
+pub use core::Endpoint as EndpointCore;
 
 /// Small endpoint-local routing table, deliberately comparable in scope to
 /// smoltcp's interface routing table rather than a router/control-plane RIB.
@@ -26,21 +28,21 @@ pub const ENDPOINT_ROUTE_CAPACITY: usize = 8;
 /// silently redirected until on-link/direct-destination semantics are defined.
 #[derive(Debug, Clone)]
 pub struct Endpoint {
-    inner: core::Endpoint,
+    inner: EndpointCore,
     routes: RouteTable<ENDPOINT_ROUTE_CAPACITY>,
 }
 
 impl Endpoint {
     pub fn new(address: GdpAddress, config: EndpointConfig) -> Result<Self> {
         Ok(Self {
-            inner: core::Endpoint::new(address, config)?,
+            inner: EndpointCore::new(address, config)?,
             routes: RouteTable::new(),
         })
     }
 
     pub fn unconfigured(link_local_suffix: u64, config: EndpointConfig) -> Result<Self> {
         Ok(Self {
-            inner: core::Endpoint::unconfigured(link_local_suffix, config)?,
+            inner: EndpointCore::unconfigured(link_local_suffix, config)?,
             routes: RouteTable::new(),
         })
     }
@@ -64,7 +66,7 @@ impl Endpoint {
 }
 
 impl Deref for Endpoint {
-    type Target = core::Endpoint;
+    type Target = EndpointCore;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
