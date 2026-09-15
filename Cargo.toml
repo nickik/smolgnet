@@ -149,3 +149,8 @@ required-features = ["p4-router", "p4-switch"]
 name = "upstream_64bit_topology"
 path = "tests/upstream_64bit_topology.rs"
 required-features = ["p4-router", "p4-switch"]
+
+[[test]]
+name = "two_switch_16_peer_topology"
+path = "tests/two_switch_16_peer_topology.rs"
+required-features = ["p4-router", "p4-switch"]
