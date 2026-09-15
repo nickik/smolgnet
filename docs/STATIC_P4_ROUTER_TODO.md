@@ -2,6 +2,8 @@
 
 PR #15 is intentionally limited to one executable milestone: a **two physical port GNet router with static routes and a P4 GDP forwarding plane**.
 
+Deferred router discovery, address authority, GS registration, lease state, live route updates, and router/switch composition are preserved in [`ADVANCED_ROUTER_DESIGN.md`](ADVANCED_ROUTER_DESIGN.md) rather than implemented here.
+
 ```text
                  static startup FIB
                         |
