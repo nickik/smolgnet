@@ -22,22 +22,29 @@ The first dynamic-routing revision stays deliberately small. It uses GCTL neighb
 Completion gate:
 
 - [x] GNet spec branch describes the same fields and byte layout as the Rust implementation.
-- [ ] Stage 1 CI passes on the exact branch head.
-- [ ] Existing GCTL/wire/library tests remain green.
+- [x] Stage 1 CI passes on the exact branch head.
+- [x] Existing GCTL/wire/library tests remain green.
 
 ## Stage 2 — Neighbor discovery
 
-- [ ] Use only `DOWN -> UP` initially.
-- [ ] Send `ROUTER_HELLO` on router links.
-- [ ] Reply with `ROUTER_HELLO_ACK`.
-- [ ] Store neighbor RouterId, local port, local/remote LinkId, neighbor GDP address, metric, and hold timer.
-- [ ] Expire neighbor state after the negotiated/simple hold timeout.
-- [ ] Two-router test proves A discovers B and B discovers A without preconstructed neighbor state.
+- [x] Use only `DOWN -> UP` initially.
+- [x] Send `ROUTER_HELLO` on router links.
+- [x] Reply with `ROUTER_HELLO_ACK` using the same transaction ID.
+- [x] Store neighbor RouterId, remote LinkId, metric, advertised hold time, last-seen time, and state per local adjacency object.
+- [x] Keep local port association outside the wire protocol by binding one adjacency object to one router-facing port/link.
+- [x] Expire neighbor state after the peer-advertised hold timeout.
+- [x] Allow a later valid HELLO/ACK to bring an expired neighbor back `UP`.
+- [x] Reject zero hold time and self-RouterId HELLO/ACK messages.
+- [x] Two-router test proves A discovers B and B discovers A without preconstructed neighbor state.
+- [x] Keep `ROUTE_ADVERTISE` unprocessed until Stage 3.
 
 Completion gate:
 
-- [ ] Two routers know only their own local identity/link configuration at startup.
-- [ ] Both reach `UP` using GCTL only.
+- [x] Two routers know only their own local identity/link configuration at startup.
+- [x] Both reach `UP` using GCTL only.
+- [x] Repeated HELLO refreshes liveness and peer parameters.
+- [x] Hold-time expiry returns the adjacency to `DOWN`.
+- [x] Stage 2-specific GCTL test suite is green.
 
 ## Stage 3 — Forward route exchange + RIB/FIB
 
