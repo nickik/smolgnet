@@ -71,6 +71,9 @@ fn router_requires_exactly_two_physical_ports() {
     let three = RouterStartupConfig::new(vec![port(0), port(1), port(2)], vec![]);
     assert_eq!(three.validate(), Err(Error::InvalidField));
 
+    let wrong_ids = RouterStartupConfig::new(vec![port(1), port(0)], vec![]);
+    assert_eq!(wrong_ids.validate(), Err(Error::InvalidField));
+
     let two = RouterStartupConfig::new(vec![port(0), port(1)], vec![]);
     assert_eq!(two.validate(), Ok(()));
     assert_eq!(StaticP4Router::new(two).unwrap().physical_port_count(), 2);
@@ -116,8 +119,9 @@ fn lpm_specific_route_overrides_connected_and_default_routes() {
 }
 
 #[test]
-fn split_64_bit_lpm_handles_32_33_63_and_64_boundaries() {
+fn split_64_bit_lpm_handles_1_32_33_63_and_64_boundaries() {
     let routes = vec![
+        StaticRouteConfig::direct(prefix(0x8000_0000_0000_0000, 1), 0),
         StaticRouteConfig::direct(prefix(0x4000_0000_0000_0000, 32), 0),
         StaticRouteConfig::direct(prefix(0x5000_0000_0000_0000, 33), 1),
         StaticRouteConfig::direct(prefix(0x6000_0000_0000_0000, 63), 0),
@@ -127,6 +131,14 @@ fn split_64_bit_lpm_handles_32_33_63_and_64_boundaries() {
     let mut router =
         StaticP4Router::new(RouterStartupConfig::new(vec![port(0), port(1)], routes)).unwrap();
 
+    expect_forward(
+        router
+            .process(1, packet(0x1000_0000_0000_0001, 0x9000_0000_1234_5678, 10))
+            .unwrap(),
+        0,
+        0x9000_0000_1234_5678,
+        9,
+    );
     expect_forward(
         router
             .process(1, packet(0x8000_0000_0000_0001, 0x4000_0000_dead_beef, 10))
@@ -209,7 +221,7 @@ fn local_form_is_never_transit_routed() {
 }
 
 #[test]
-fn hop_one_and_same_port_hairpin_are_dropped() {
+fn hop_one_same_port_hairpin_and_invalid_ingress_are_rejected() {
     let mut router = router();
     assert_eq!(
         router
@@ -222,6 +234,12 @@ fn hop_one_and_same_port_hairpin_are_dropped() {
             .process(1, packet(0x3300_0000_0000_0001, 0x9900_0000_0000_0001, 8))
             .unwrap(),
         RouterDisposition::Drop
+    );
+    assert_eq!(
+        router
+            .process(2, packet(0x3300_0000_0000_0001, 0x9900_0000_0000_0001, 8))
+            .unwrap_err(),
+        Error::InvalidField
     );
 }
 
@@ -242,13 +260,54 @@ fn static_route_validation_rejects_invalid_ports_duplicates_and_next_hops() {
     );
     assert_eq!(duplicate.validate(), Err(Error::InvalidField));
 
-    let global_next_hop = RouterStartupConfig::new(
+    let connected_prefix = prefix(0x1200_0000_0000_0000, 16);
+    let connected = port(0).with_connected_network(
+        connected_prefix,
+        GdpAddress(0x1200_0000_0000_0001),
+    );
+    let duplicate_connected = RouterStartupConfig::new(
+        vec![connected, port(1)],
+        vec![StaticRouteConfig::direct(connected_prefix, 1)],
+    );
+    assert_eq!(duplicate_connected.validate(), Err(Error::InvalidField));
+
+    let valid_next_hop = RouterStartupConfig::new(
         vec![port(0), port(1)],
         vec![StaticRouteConfig::via(
             GdpPrefix::default_route(),
             1,
-            GdpAddress(0x9900_0000_0000_0001),
+            GdpAddress(0xfe80_0000_0000_00ff),
         )],
     );
-    assert_eq!(global_next_hop.validate(), Err(Error::InvalidField));
+    assert_eq!(valid_next_hop.validate(), Ok(()));
+
+    for next_hop in [
+        GdpAddress(0x9900_0000_0000_0001),
+        ROUTER_BOOTSTRAP_ADDRESS,
+        GdpAddress(0xfe80_0000_0000_0001),
+    ] {
+        let invalid = RouterStartupConfig::new(
+            vec![port(0), port(1)],
+            vec![StaticRouteConfig::via(
+                GdpPrefix::default_route(),
+                1,
+                next_hop,
+            )],
+        );
+        assert_eq!(invalid.validate(), Err(Error::InvalidField));
+    }
+}
+
+#[test]
+fn static_64_routes_cannot_capture_router_or_bootstrap_addresses() {
+    for destination in [
+        ROUTER_BOOTSTRAP_ADDRESS,
+        GdpAddress(0xfe80_0000_0000_0001),
+    ] {
+        let config = RouterStartupConfig::new(
+            vec![port(0), port(1)],
+            vec![StaticRouteConfig::direct(prefix(destination.0, 64), 1)],
+        );
+        assert_eq!(config.validate(), Err(Error::InvalidField));
+    }
 }
