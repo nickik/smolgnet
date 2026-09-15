@@ -26,11 +26,14 @@ pub enum SwitchDisposition {
 
 /// Fixed eight-port GNet switch with a Rust management plane and the same
 /// x4c/P4 GDP parser/SoftNPU model used elsewhere in smolgnet. Node management
-/// programs an exact destination-address table; the P4 fast path performs the
-/// actual forwarding decision without changing the GDP packet.
+/// programs an exact destination-address table. Once GCTL discovery identifies
+/// a router-facing port, unknown global destinations from other ports use that
+/// port as the default uplink; packets arriving from the router never bounce
+/// back to it.
 pub struct StaticP4Switch {
     pipeline: main_pipeline,
     nodes: BTreeMap<GdpAddress, SwitchPortId>,
+    default_router_port: Option<SwitchPortId>,
 }
 
 impl StaticP4Switch {
@@ -38,6 +41,7 @@ impl StaticP4Switch {
         Self {
             pipeline: main_pipeline::new(SWITCH_PORT_COUNT),
             nodes: BTreeMap::new(),
+            default_router_port: None,
         }
     }
 
@@ -47,6 +51,28 @@ impl StaticP4Switch {
 
     pub fn node_port(&self, address: GdpAddress) -> Option<SwitchPortId> {
         self.nodes.get(&address).copied()
+    }
+
+    pub const fn default_router_port(&self) -> Option<SwitchPortId> {
+        self.default_router_port
+    }
+
+    pub fn set_default_router_port(
+        &mut self,
+        port: SwitchPortId,
+    ) -> crate::error::Result<Option<SwitchPortId>> {
+        validate_port(port)?;
+        let previous = self.default_router_port.replace(port);
+        self.rebuild_pipeline();
+        Ok(previous)
+    }
+
+    pub fn clear_default_router_port(&mut self) -> Option<SwitchPortId> {
+        let previous = self.default_router_port.take();
+        if previous.is_some() {
+            self.rebuild_pipeline();
+        }
+        previous
     }
 
     pub fn register_node(
@@ -112,6 +138,13 @@ impl StaticP4Switch {
         for (&address, &port) in &self.nodes {
             program_global_node(&mut pipeline, address, port);
         }
+        if let Some(router_port) = self.default_router_port {
+            for ingress_port in 0..SWITCH_PORT_COUNT {
+                if ingress_port != router_port {
+                    program_default_router(&mut pipeline, ingress_port, router_port);
+                }
+            }
+        }
         self.pipeline = pipeline;
     }
 }
@@ -132,6 +165,20 @@ fn program_global_node(pipeline: &mut main_pipeline, address: GdpAddress, port: 
         "forward",
         &key,
         &port.to_le_bytes(),
+        0,
+    );
+}
+
+fn program_default_router(
+    pipeline: &mut main_pipeline,
+    ingress_port: SwitchPortId,
+    router_port: SwitchPortId,
+) {
+    pipeline.add_table_entry(
+        "ingress.default_router",
+        "forward",
+        &ingress_port.to_le_bytes(),
+        &router_port.to_le_bytes(),
         0,
     );
 }
