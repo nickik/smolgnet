@@ -25,7 +25,7 @@ pub enum Error {
     WouldBlock,
 }
 
-pub type Result<T> = core::result::Result<T, Error>;
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
