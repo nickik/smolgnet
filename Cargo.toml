@@ -59,6 +59,21 @@ path = "tests/link.rs"
 required-features = ["alloc"]
 
 [[test]]
+name = "dlp_v01"
+path = "tests/dlp_v01.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "dlp_gdp_boundary"
+path = "tests/dlp_gdp_boundary.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "dlp_link_control"
+path = "tests/dlp_link_control.rs"
+required-features = ["alloc"]
+
+[[test]]
 name = "transport"
 path = "tests/transport.rs"
 required-features = ["alloc"]
