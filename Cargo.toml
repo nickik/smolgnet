@@ -71,6 +71,11 @@ path = "tests/dlp_link_control.rs"
 required-features = ["alloc"]
 
 [[test]]
+name = "egress_scheduler"
+path = "tests/egress_scheduler.rs"
+required-features = ["alloc"]
+
+[[test]]
 name = "transport"
 path = "tests/transport.rs"
 required-features = ["alloc"]
