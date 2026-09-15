@@ -28,6 +28,8 @@ pub mod endpoint;
 pub mod gts;
 #[cfg(feature = "alloc")]
 pub mod router_adjacency;
+#[cfg(feature = "alloc")]
+pub mod router_rib;
 #[cfg(feature = "p4-gdp")]
 pub mod p4_gdp;
 #[cfg(feature = "p4-gts")]
@@ -45,10 +47,6 @@ pub mod runtime;
 #[cfg(feature = "alloc")]
 pub mod trace;
 
-// Transitional crate-private compatibility name for the endpoint core while
-// the DLP implementation lives in the explicit `dlp` module. This is not part
-// of the public API and can disappear once the endpoint core is mechanically
-// updated to import `crate::dlp` directly.
 #[cfg(feature = "alloc")]
 mod link {
     pub(crate) use crate::dlp::*;
@@ -94,6 +92,8 @@ pub use endpoint::{
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
 #[cfg(feature = "alloc")]
 pub use router_adjacency::{NeighborState, RouterAdjacency, RouterNeighbor};
+#[cfg(feature = "alloc")]
+pub use router_rib::{RibRoute, RouterRib, RoutingPortId, SelectedRoute};
 #[cfg(feature = "p4-router")]
 pub use static_router::{
     FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
