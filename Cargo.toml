@@ -17,7 +17,7 @@ std = ["alloc"]
 alloc = []
 async = []
 # Shared hosted runtime required by the pinned x4c Rust backend. This is kept
-# separate so GDP and GTS can independently select P4 without duplicating deps.
+# separate so GDP, GTS and the router can independently select P4.
 p4-runtime = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
 # Use the x4c-generated P4 parser for normal GDP header decoding.
 p4-gdp = ["p4-runtime"]
@@ -31,6 +31,9 @@ p4-gts = ["p4-runtime"]
 # Run every GTS packet through both lower wire codecs and reject any RX or TX
 # difference before/after the common GTS semantic layers.
 p4-gts-compare = ["p4-gts"]
+# Multi-port GDP router: x4c/P4 owns route/policy lookup and hop-limit transit
+# processing; Rust owns control-plane updates, queues, counters and CPU punt.
+p4-router = ["p4-runtime"]
 
 [dependencies]
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
@@ -56,6 +59,16 @@ required-features = ["alloc"]
 [[test]]
 name = "link"
 path = "tests/link.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "dlp_v01"
+path = "tests/dlp_v01.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "dlp_gdp_boundary"
+path = "tests/dlp_gdp_boundary.rs"
 required-features = ["alloc"]
 
 [[test]]
@@ -117,3 +130,8 @@ required-features = ["p4-gts"]
 name = "gts_performance"
 path = "tests/gts_performance.rs"
 required-features = ["p4-gts"]
+
+[[test]]
+name = "p4_router"
+path = "tests/p4_router.rs"
+required-features = ["p4-router"]

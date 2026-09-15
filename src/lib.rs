@@ -25,6 +25,8 @@ pub mod gts;
 pub mod p4_gdp;
 #[cfg(feature = "p4-gts")]
 pub mod p4_gts;
+#[cfg(feature = "p4-router")]
+pub mod p4_router;
 #[cfg(feature = "alloc")]
 pub mod qdx;
 #[cfg(feature = "alloc")]
@@ -70,6 +72,11 @@ pub use endpoint::{
 };
 #[cfg(feature = "alloc")]
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
+#[cfg(feature = "p4-router")]
+pub use p4_router::{
+    AdjacencyId, P4Router, PolicyAction, PortCounters, QueueClass, RouteId, RouteTarget,
+    RouterAdjacency, RouterCounters, RouterPortId, RouterRoute,
+};
 #[cfg(feature = "alloc")]
 pub use qdx::{GnetFlitDevice, GnetFrameDevice};
 #[cfg(feature = "alloc")]

@@ -1,0 +1,34 @@
+name: P4 GDP Router
+
+on:
+  push:
+    branches: [main, p4-router-v0.1]
+    paths:
+      - 'p4-router/**'
+      - 'src/p4_router.rs'
+      - 'src/dlp_gdp.rs'
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'tests/p4_router.rs'
+      - '.github/workflows/p4-router.yml'
+  pull_request:
+    paths:
+      - 'p4-router/**'
+      - 'src/p4_router.rs'
+      - 'src/dlp_gdp.rs'
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'tests/p4_router.rs'
+      - '.github/workflows/p4-router.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check P4 router
+        run: cargo check --features p4-router --test p4_router
+      - name: Run P4 router tests
+        run: cargo test --features p4-router --test p4_router
