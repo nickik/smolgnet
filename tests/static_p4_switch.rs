@@ -112,9 +112,8 @@ fn every_port_can_be_ingress_and_egress() {
                 continue;
             }
             let mut switch = StaticP4Switch::new();
-            let destination = GdpAddress(
-                0x5000_0000_0000_0000 | ((ingress as u64) << 8) | egress as u64,
-            );
+            let destination =
+                GdpAddress(0x5000_0000_0000_0000 | ((ingress as u64) << 8) | egress as u64);
             switch.register_node(destination, egress).unwrap();
             let original = packet(destination.0, 0x6600_0000_0000_0000 | ingress as u64, 11);
             assert_eq!(
