@@ -61,7 +61,9 @@ fn right_router() -> StaticP4Router {
 fn switch(peers: &[Peer; PEERS]) -> StaticP4Switch {
     let mut switch = StaticP4Switch::with_port_count(SWITCH_PORTS).unwrap();
     for endpoint in peers {
-        switch.register_node(endpoint.address, endpoint.port).unwrap();
+        switch
+            .register_node(endpoint.address, endpoint.port)
+            .unwrap();
     }
     switch.set_default_router_port(SWITCH_ROUTER_PORT).unwrap();
     switch
@@ -98,13 +100,7 @@ fn packet(source: Peer, destination: Peer, flow: usize, direction: u8) -> GdpPac
         payload[11..19].copy_from_slice(&destination.address.0.to_be_bytes());
     }
     GdpPacket::new(
-        GdpHeader::global(
-            GdpType::Gts,
-            size,
-            16,
-            source.address,
-            destination.address,
-        ),
+        GdpHeader::global(GdpType::Gts, size, 16, source.address, destination.address),
         payload,
     )
     .unwrap()
@@ -176,10 +172,7 @@ fn deliver_from_link(
     }
 }
 
-fn queue_three_flows(
-    pending: &mut VecDeque<RoutedFrame>,
-    link: &mut DlpLink,
-) -> Vec<usize> {
+fn queue_three_flows(pending: &mut VecDeque<RoutedFrame>, link: &mut DlpLink) -> Vec<usize> {
     let mut flows = Vec::new();
     for _ in 0..3 {
         let Some(frame) = pending.pop_front() else {
@@ -285,18 +278,8 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
         // Full-duplex link: advance one complete GDP frame in each direction
         // alternately. A VCID is therefore owned for exactly one packet quantum
         // and is available to another flow in the next scheduler round.
-        let l2r = transmit_batch(
-            &mut left_dlp,
-            &mut right_dlp,
-            &l2r_flows,
-            &l2r_expected,
-        );
-        let r2l = transmit_batch(
-            &mut right_dlp,
-            &mut left_dlp,
-            &r2l_flows,
-            &r2l_expected,
-        );
+        let l2r = transmit_batch(&mut left_dlp, &mut right_dlp, &l2r_flows, &l2r_expected);
+        let r2l = transmit_batch(&mut right_dlp, &mut left_dlp, &r2l_flows, &r2l_expected);
 
         for (flow, vcid, packet) in l2r {
             l2r_vc_history.push((flow, vcid));
@@ -318,14 +301,8 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
 
         for (flow, vcid, packet) in r2l {
             r2l_vc_history.push((flow, vcid));
-            let delivered = deliver_from_link(
-                &mut left_router,
-                &mut left_switch,
-                left[flow],
-                packet,
-                1,
-                0,
-            );
+            let delivered =
+                deliver_from_link(&mut left_router, &mut left_switch, left[flow], packet, 1, 0);
             assert_eq!(delivered.payload[0] as usize, flow);
             assert_eq!(delivered.payload[1], 1);
             assert_eq!(delivered.header.source(), right[flow].address);
