@@ -26,6 +26,8 @@ pub mod egress_scheduler;
 pub mod endpoint;
 #[cfg(feature = "alloc")]
 pub mod gts;
+#[cfg(feature = "alloc")]
+pub mod router_adjacency;
 #[cfg(feature = "p4-gdp")]
 pub mod p4_gdp;
 #[cfg(feature = "p4-gts")]
@@ -90,6 +92,8 @@ pub use endpoint::{
 };
 #[cfg(feature = "alloc")]
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
+#[cfg(feature = "alloc")]
+pub use router_adjacency::{NeighborState, RouterAdjacency, RouterNeighbor};
 #[cfg(feature = "p4-router")]
 pub use static_router::{
     FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
