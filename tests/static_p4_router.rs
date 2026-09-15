@@ -51,7 +51,10 @@ fn expect_forward(
             packet,
         } => {
             assert_eq!(egress_port, expected_port);
-            assert_eq!(packet.header.destination(), GdpAddress(expected_destination));
+            assert_eq!(
+                packet.header.destination(),
+                GdpAddress(expected_destination)
+            );
             assert_eq!(packet.header.hop_limit, expected_hop);
         }
         other => panic!("expected forward to port {expected_port}, got {other:?}"),
@@ -121,11 +124,8 @@ fn split_64_bit_lpm_handles_32_33_63_and_64_boundaries() {
         StaticRouteConfig::direct(prefix(0x7000_0000_0000_0001, 64), 1),
         StaticRouteConfig::direct(GdpPrefix::default_route(), 1),
     ];
-    let mut router = StaticP4Router::new(RouterStartupConfig::new(
-        vec![port(0), port(1)],
-        routes,
-    ))
-    .unwrap();
+    let mut router =
+        StaticP4Router::new(RouterStartupConfig::new(vec![port(0), port(1)], routes)).unwrap();
 
     expect_forward(
         router
@@ -201,7 +201,10 @@ fn local_form_is_never_transit_routed() {
     let packet = GdpPacket::new(header, vec![0; 32]).unwrap();
     assert!(matches!(
         router.process(0, packet).unwrap(),
-        RouterDisposition::Punt { ingress_port: 0, .. }
+        RouterDisposition::Punt {
+            ingress_port: 0,
+            ..
+        }
     ));
 }
 
