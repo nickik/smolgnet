@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/dynamic_routing.rs'
       - 'src/router_adjacency.rs'
+      - 'src/router_rib.rs'
       - 'src/wire/gctl.rs'
       - 'src/wire/gctl_routing.rs'
       - 'src/wire/mod.rs'
@@ -12,6 +13,7 @@ on:
       - 'tests/gctl_node_discovery.rs'
       - 'tests/dynamic_routing_stage1.rs'
       - 'tests/dynamic_routing_stage2.rs'
+      - 'tests/dynamic_routing_stage3.rs'
       - 'tests/wire.rs'
       - 'Cargo.toml'
       - '.github/workflows/gctl-node-discovery.yml'
@@ -28,8 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run GCTL routing, adjacency, discovery and existing wire tests
+      - name: Run GCTL routing, adjacency, route exchange and wire tests
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=5s 90s \
-            cargo test --test dynamic_routing_stage1 --test dynamic_routing_stage2 --test gctl_node_discovery --test wire -- --nocapture --test-threads=1
+            cargo test --test dynamic_routing_stage1 --test dynamic_routing_stage2 --test dynamic_routing_stage3 --test gctl_node_discovery --test wire -- --nocapture --test-threads=1
