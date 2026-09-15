@@ -50,10 +50,7 @@ fn invalid_ports_and_link_local_nodes_are_rejected() {
     );
     assert_eq!(
         switch
-            .process(
-                8,
-                packet(0x1200_0000_0000_0001, 0x9900_0000_0000_0001, 8)
-            )
+            .process(8, packet(0x1200_0000_0000_0001, 0x9900_0000_0000_0001, 8))
             .unwrap_err(),
         Error::InvalidField
     );
@@ -123,10 +120,7 @@ fn multiple_nodes_can_share_one_egress_port() {
     for destination in [a, b] {
         assert!(matches!(
             switch
-                .process(
-                    1,
-                    packet(destination.0, 0x9900_0000_0000_0001, 8)
-                )
+                .process(1, packet(destination.0, 0x9900_0000_0000_0001, 8))
                 .unwrap(),
             SwitchDisposition::Forward { egress_port: 6, .. }
         ));
