@@ -40,7 +40,9 @@ fn simulation_switch_can_use_nine_ports_without_changing_default() {
     let node = GdpAddress(0x1200_0000_0000_0042);
     switch.register_node(node, 8).unwrap();
     assert!(matches!(
-        switch.process(0, packet(node.0, 0x9900_0000_0000_0001, 8)).unwrap(),
+        switch
+            .process(0, packet(node.0, 0x9900_0000_0000_0001, 8))
+            .unwrap(),
         SwitchDisposition::Forward { egress_port: 8, .. }
     ));
 }
