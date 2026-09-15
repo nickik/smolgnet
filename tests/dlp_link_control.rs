@@ -97,7 +97,7 @@ fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
     let mut client = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0001), cfg(40, VcMode::Two, 40), 32).unwrap();
     let mut server = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0002), cfg(40, VcMode::Two, 40), 32).unwrap();
     let mut cable = DlpDirectCable::new(); cable.attach(&mut client, &mut server).unwrap();
-    let service = ServiceSelector::registered(3).unwrap(); server.listen(service, ListenerConfig::default());
+    let service = ServiceSelector::registered(1).unwrap(); server.listen(service, ListenerConfig::default());
     let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional); let ch = client.connect(server.address(), service, profile).unwrap();
     cable.pump(&mut client, &mut server, 0, 100_000).unwrap(); let sh = server.accept().unwrap();
     client.send(ch, 0, b"first packet", 1).unwrap(); client.send(ch, 0, b"second packet", 1).unwrap();
@@ -156,7 +156,7 @@ fn reset_during_partial_gdp_discards_stale_reassembly_and_allows_fresh_gts() {
     let mut a = DlpManagedEndpoint::new(GdpAddress(0x6000_0000_0000_0001), cfg(512, VcMode::Four, 1), 64).unwrap();
     let mut b = DlpManagedEndpoint::new(GdpAddress(0x6000_0000_0000_0002), cfg(512, VcMode::Four, 1), 64).unwrap();
     let mut cable = DlpDirectCable::new(); cable.attach(&mut a, &mut b).unwrap();
-    let service = ServiceSelector::registered(4).unwrap(); b.listen(service, ListenerConfig::default()); let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional);
+    let service = ServiceSelector::registered(1).unwrap(); b.listen(service, ListenerConfig::default()); let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional);
     let ah = a.connect(b.address(), service, profile).unwrap(); cable.pump(&mut a, &mut b, 0, 100_000).unwrap(); let _bh = b.accept().unwrap();
     a.send(ah, 0, b"this packet will be interrupted", 1).unwrap(); let mut partial = None;
     for _ in 0..128 { match a.poll_tx_flit() {
