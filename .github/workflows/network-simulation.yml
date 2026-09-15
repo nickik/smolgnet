@@ -12,6 +12,7 @@ on:
       - 'tests/network_simulation.rs'
       - 'tests/upstream_64bit_topology.rs'
       - 'tests/two_switch_16_peer_topology.rs'
+      - 'tests/router_to_router_simulation.rs'
       - 'Cargo.toml'
       - '.github/workflows/network-simulation.yml'
   workflow_dispatch:
@@ -29,12 +30,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check switch source formatting
-        run: rustfmt --check src/static_switch.rs
+      - name: Check simulation formatting
+        run: rustfmt --check src/static_switch.rs tests/router_to_router_simulation.rs
       - name: Check simulation build
-        run: cargo check --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology
+        run: cargo check --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology --test router_to_router_simulation
       - name: Run stable topology scenarios
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=5s 120s \
-            cargo test --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology -- --nocapture --test-threads=1
+            cargo test --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology --test router_to_router_simulation -- --nocapture --test-threads=1
