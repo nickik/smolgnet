@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/static_router.rs'
+      - 'src/error.rs'
       - 'src/lib.rs'
       - 'p4-static-router/**'
       - 'tests/static_p4_router.rs'
