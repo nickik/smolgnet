@@ -149,7 +149,7 @@ control ingress(
 
         if (hdr.global_addr.isValid()) {
             global_long_routes.apply();
-            if (!egress.decided) {
+            if (egress.decided == false) {
                 global_short_routes.apply();
             }
         } else {
