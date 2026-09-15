@@ -9,10 +9,12 @@ use crate::wire::gdp::GdpAddress;
 pub const GCTL_ROUTER_HELLO: u8 = 0x40;
 pub const GCTL_ROUTER_HELLO_ACK: u8 = 0x41;
 pub const GCTL_ROUTE_ADVERTISE: u8 = 0x42;
+pub const GCTL_ROUTE_WITHDRAW: u8 = 0x43;
 pub const GCTL_ROUTING_VERSION: u8 = 1;
 pub const GCTL_HEADER_LEN: usize = 8;
 pub const ROUTER_HELLO_BODY_LEN: usize = 24;
 pub const ROUTE_ADVERTISE_BODY_LEN: usize = 24;
+pub const ROUTE_WITHDRAW_BODY_LEN: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouterHello {
@@ -31,10 +33,17 @@ pub struct RouteAdvertise {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteWithdraw {
+    pub advertiser: RouterId,
+    pub prefix: GdpPrefix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutingGctlBody {
     RouterHello(RouterHello),
     RouterHelloAck(RouterHello),
     RouteAdvertise(RouteAdvertise),
+    RouteWithdraw(RouteWithdraw),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,15 +54,31 @@ pub struct RoutingGctlMessage {
 
 impl RoutingGctlMessage {
     pub fn router_hello(transaction_id: u32, hello: RouterHello) -> Self {
-        Self { transaction_id, body: RoutingGctlBody::RouterHello(hello) }
+        Self {
+            transaction_id,
+            body: RoutingGctlBody::RouterHello(hello),
+        }
     }
 
     pub fn router_hello_ack(transaction_id: u32, hello: RouterHello) -> Self {
-        Self { transaction_id, body: RoutingGctlBody::RouterHelloAck(hello) }
+        Self {
+            transaction_id,
+            body: RoutingGctlBody::RouterHelloAck(hello),
+        }
     }
 
     pub fn route_advertise(transaction_id: u32, route: RouteAdvertise) -> Self {
-        Self { transaction_id, body: RoutingGctlBody::RouteAdvertise(route) }
+        Self {
+            transaction_id,
+            body: RoutingGctlBody::RouteAdvertise(route),
+        }
+    }
+
+    pub fn route_withdraw(transaction_id: u32, route: RouteWithdraw) -> Self {
+        Self {
+            transaction_id,
+            body: RoutingGctlBody::RouteWithdraw(route),
+        }
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -62,6 +87,9 @@ impl RoutingGctlMessage {
             RoutingGctlBody::RouterHelloAck(hello) => (GCTL_ROUTER_HELLO_ACK, encode_hello(hello)),
             RoutingGctlBody::RouteAdvertise(route) => {
                 (GCTL_ROUTE_ADVERTISE, encode_route_advertise(route))
+            }
+            RoutingGctlBody::RouteWithdraw(route) => {
+                (GCTL_ROUTE_WITHDRAW, encode_route_withdraw(route))
             }
         };
 
@@ -93,9 +121,15 @@ impl RoutingGctlMessage {
             GCTL_ROUTE_ADVERTISE => {
                 RoutingGctlBody::RouteAdvertise(decode_route_advertise(&buf[8..])?)
             }
+            GCTL_ROUTE_WITHDRAW => {
+                RoutingGctlBody::RouteWithdraw(decode_route_withdraw(&buf[8..])?)
+            }
             _ => return Err(Error::Unsupported),
         };
-        Ok(Self { transaction_id, body })
+        Ok(Self {
+            transaction_id,
+            body,
+        })
     }
 }
 
@@ -154,4 +188,31 @@ fn decode_route_advertise(body: &[u8]) -> Result<RouteAdvertise> {
         origin: RouteOrigin::from_wire(body[17])?,
         metric: RouteMetric(u32::from_be_bytes(body[20..24].try_into().unwrap())),
     })
+}
+
+fn encode_route_withdraw(route: RouteWithdraw) -> [u8; ROUTE_WITHDRAW_BODY_LEN] {
+    let mut body = [0u8; ROUTE_WITHDRAW_BODY_LEN];
+    body[0..8].copy_from_slice(&route.advertiser.0.to_be_bytes());
+    body[8..16].copy_from_slice(&route.prefix.network().0.to_be_bytes());
+    body[16] = route.prefix.prefix_len();
+    body
+}
+
+fn decode_route_withdraw(body: &[u8]) -> Result<RouteWithdraw> {
+    if body.len() != ROUTE_WITHDRAW_BODY_LEN {
+        return Err(Error::InvalidLength);
+    }
+    if body[17..24].iter().any(|byte| *byte != 0) {
+        return Err(Error::InvalidField);
+    }
+
+    let advertiser = RouterId::new(u64::from_be_bytes(body[0..8].try_into().unwrap()))?;
+    let network = GdpAddress(u64::from_be_bytes(body[8..16].try_into().unwrap()));
+    let prefix_len = body[16];
+    let prefix = GdpPrefix::new(network, prefix_len).map_err(|_| Error::InvalidField)?;
+    if prefix.network() != network {
+        return Err(Error::NonCanonical);
+    }
+
+    Ok(RouteWithdraw { advertiser, prefix })
 }
