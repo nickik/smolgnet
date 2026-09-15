@@ -1,0 +1,38 @@
+name: Static P4 Router
+
+on:
+  pull_request:
+    paths:
+      - 'src/static_router.rs'
+      - 'src/error.rs'
+      - 'src/lib.rs'
+      - 'p4-static-router/**'
+      - 'tests/static_p4_router.rs'
+      - 'docs/STATIC_P4_ROUTER_TODO.md'
+      - 'docs/ADVANCED_ROUTER_DESIGN.md'
+      - 'Cargo.toml'
+      - '.github/workflows/static-p4-router.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check router source formatting
+        run: rustfmt --check src/static_router.rs tests/static_p4_router.rs
+      - name: Check static P4 router
+        run: cargo check --features p4-router --test static_p4_router
+      - name: Run static P4 router tests with bounded runtime and debug output
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 90s \
+            cargo test --features p4-router --test static_p4_router -- --nocapture --test-threads=1
