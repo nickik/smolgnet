@@ -99,6 +99,15 @@ impl RouterPort {
         self.queues.iter().map(VecDeque::len).sum()
     }
 
+    fn clear_queues(&mut self) -> usize {
+        let dropped = self.queued();
+        for queue in &mut self.queues {
+            queue.clear();
+        }
+        self.counters.drops = self.counters.drops.saturating_add(dropped as u64);
+        dropped
+    }
+
     fn push(&mut self, class: QueueClass, packet: GdpPacket, limit: usize) -> Result<()> {
         if self.queued() >= limit {
             self.counters.drops = self.counters.drops.saturating_add(1);
@@ -173,6 +182,14 @@ impl P4Router {
 
     pub fn port_counters(&self, port: RouterPortId) -> Result<PortCounters> {
         Ok(self.port(port)?.counters)
+    }
+
+    pub fn adjacency(&self, id: AdjacencyId) -> Option<RouterAdjacency> {
+        self.adjacencies.get(&id).copied()
+    }
+
+    pub fn route(&self, id: RouteId) -> Option<RouterRoute> {
+        self.routes.get(&id).copied()
     }
 
     pub fn set_cpu_queue_limit(&mut self, limit: usize) -> Result<()> {
@@ -254,10 +271,19 @@ impl P4Router {
         self.rebuild_pipeline()
     }
 
-    /// Link-down is a control-plane event. Rebuilding the P4 tables immediately
-    /// selects the next-best candidate for every affected prefix.
+    /// Link-down is a control-plane event. Pending egress packets for the dead
+    /// link are discarded and P4 tables are rebuilt so the next-best candidate
+    /// for each affected prefix becomes active immediately.
     pub fn set_port_up(&mut self, port: RouterPortId, up: bool) -> Result<()> {
-        self.port_mut(port)?.up = up;
+        let dropped = {
+            let p = self.port_mut(port)?;
+            p.up = up;
+            if up { 0 } else { p.clear_queues() }
+        };
+        if dropped != 0 {
+            self.counters.queue_drops = self.counters.queue_drops.saturating_add(dropped as u64);
+            self.counters.drops = self.counters.drops.saturating_add(dropped as u64);
+        }
         self.rebuild_pipeline()
     }
 
@@ -268,15 +294,17 @@ impl P4Router {
     /// Ingest one complete packet from the frozen DLP/GDP boundary.
     pub fn ingest(&mut self, ingress_port: RouterPortId, packet: GdpPacket) -> Result<()> {
         if !self.port(ingress_port)?.up {
-            self.port_mut(ingress_port)?.counters.drops =
-                self.port(ingress_port)?.counters.drops.saturating_add(1);
+            let p = self.port_mut(ingress_port)?;
+            p.counters.drops = p.counters.drops.saturating_add(1);
             self.counters.drops = self.counters.drops.saturating_add(1);
             return Err(Error::LinkDown);
         }
 
         self.counters.rx_packets = self.counters.rx_packets.saturating_add(1);
-        self.port_mut(ingress_port)?.counters.rx_packets =
-            self.port(ingress_port)?.counters.rx_packets.saturating_add(1);
+        {
+            let p = self.port_mut(ingress_port)?;
+            p.counters.rx_packets = p.counters.rx_packets.saturating_add(1);
+        }
 
         let local_prefix = match packet.header.addresses {
             GdpAddresses::Global { .. } => 0,
@@ -289,8 +317,8 @@ impl P4Router {
 
         if outputs.is_empty() {
             self.counters.drops = self.counters.drops.saturating_add(1);
-            self.port_mut(ingress_port)?.counters.drops =
-                self.port(ingress_port)?.counters.drops.saturating_add(1);
+            let p = self.port_mut(ingress_port)?;
+            p.counters.drops = p.counters.drops.saturating_add(1);
             return Ok(());
         }
 
@@ -424,7 +452,7 @@ impl P4Router {
                     action,
                     &key,
                     &params,
-                    route.preference as i32,
+                    0,
                 );
             } else {
                 let hi = (route.prefix >> 32) as u32;
@@ -435,7 +463,7 @@ impl P4Router {
                     action,
                     &key,
                     &params,
-                    route.preference as i32,
+                    0,
                 );
             }
         }
