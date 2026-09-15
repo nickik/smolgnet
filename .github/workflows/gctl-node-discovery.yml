@@ -1,0 +1,28 @@
+name: GCTL Node Discovery
+
+on:
+  pull_request:
+    paths:
+      - 'src/wire/gctl.rs'
+      - 'tests/gctl_node_discovery.rs'
+      - 'tests/wire.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/gctl-node-discovery.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run GCTL discovery and existing wire tests
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 90s \
+            cargo test --test gctl_node_discovery --test wire -- --nocapture --test-threads=1
