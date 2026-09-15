@@ -94,13 +94,6 @@ pub struct DlpNegotiatedProfile {
     pub peer_control_window_flits: u32,
 }
 
-/// One 32-bit logical GLCP control flit.
-///
-/// HELLO, CAPABILITIES and RESET follow the canonical GNet 0.1 layouts. The
-/// LinkParameters opcode is the smolgnet v0.1 extension used to negotiate the
-/// receive-window and burst limits required by the executable DLP model. It is
-/// still exactly one 32-bit logical control flit and is generation-scoped like
-/// the baseline operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DlpControlFrame {
     Hello {
@@ -138,40 +131,23 @@ impl DlpControlFrame {
 
     pub const fn sender_generation(self) -> u8 {
         match self {
-            Self::Hello {
-                sender_generation, ..
-            }
-            | Self::Capabilities {
-                sender_generation, ..
-            }
-            | Self::Reset {
-                sender_generation, ..
-            }
-            | Self::LinkParameters {
-                sender_generation, ..
-            } => sender_generation,
+            Self::Hello { sender_generation, .. }
+            | Self::Capabilities { sender_generation, .. }
+            | Self::Reset { sender_generation, .. }
+            | Self::LinkParameters { sender_generation, .. } => sender_generation,
         }
     }
 
     pub fn encode(self) -> [u8; DLP_CONTROL_FRAME_LEN] {
         let word = match self {
-            Self::Hello {
-                kind,
-                sender_generation,
-                peer_generation,
-            } => {
+            Self::Hello { kind, sender_generation, peer_generation } => {
                 ((DlpControlOpcode::Hello as u32) << 28)
                     | ((DLP_CONTROL_VERSION as u32) << 24)
                     | ((kind as u32) << 22)
                     | (((sender_generation & 0x3f) as u32) << 16)
                     | (((peer_generation & 0x3f) as u32) << 10)
             }
-            Self::Capabilities {
-                kind,
-                sender_generation,
-                profiles,
-                rates,
-            } => {
+            Self::Capabilities { kind, sender_generation, profiles, rates } => {
                 ((DlpControlOpcode::Capabilities as u32) << 28)
                     | ((DLP_CONTROL_VERSION as u32) << 24)
                     | (((sender_generation & 0x3f) as u32) << 18)
@@ -179,21 +155,13 @@ impl DlpControlFrame {
                     | (((profiles & 0x0f) as u32) << 12)
                     | (((rates & 0x07) as u32) << 9)
             }
-            Self::Reset {
-                sender_generation,
-                reason,
-            } => {
+            Self::Reset { sender_generation, reason } => {
                 ((DlpControlOpcode::Reset as u32) << 28)
                     | ((DLP_CONTROL_VERSION as u32) << 24)
                     | (((sender_generation & 0x3f) as u32) << 18)
                     | (((reason & 0x0f) as u32) << 14)
             }
-            Self::LinkParameters {
-                kind,
-                sender_generation,
-                rx_window_units,
-                burst_units,
-            } => {
+            Self::LinkParameters { kind, sender_generation, rx_window_units, burst_units } => {
                 ((DlpControlOpcode::LinkParameters as u32) << 28)
                     | ((DLP_CONTROL_VERSION as u32) << 24)
                     | (((sender_generation & 0x3f) as u32) << 18)
@@ -228,19 +196,11 @@ impl DlpControlFrame {
                     return Err(Error::InvalidField);
                 }
                 match kind {
-                    DlpHelloKind::Initial if peer_generation != 0 => {
-                        return Err(Error::InvalidField)
-                    }
-                    DlpHelloKind::Acknowledgement if peer_generation == 0 => {
-                        return Err(Error::InvalidField)
-                    }
+                    DlpHelloKind::Initial if peer_generation != 0 => return Err(Error::InvalidField),
+                    DlpHelloKind::Acknowledgement if peer_generation == 0 => return Err(Error::InvalidField),
                     _ => {}
                 }
-                Ok(Self::Hello {
-                    kind,
-                    sender_generation,
-                    peer_generation,
-                })
+                Ok(Self::Hello { kind, sender_generation, peer_generation })
             }
             DlpControlOpcode::Capabilities => {
                 if word & 0x1ff != 0 {
@@ -258,12 +218,7 @@ impl DlpControlFrame {
                 {
                     return Err(Error::InvalidField);
                 }
-                Ok(Self::Capabilities {
-                    kind,
-                    sender_generation,
-                    profiles,
-                    rates,
-                })
+                Ok(Self::Capabilities { kind, sender_generation, profiles, rates })
             }
             DlpControlOpcode::Reset => {
                 if word & 0x3fff != 0 {
@@ -274,10 +229,7 @@ impl DlpControlFrame {
                 if sender_generation == 0 {
                     return Err(Error::InvalidField);
                 }
-                Ok(Self::Reset {
-                    sender_generation,
-                    reason,
-                })
+                Ok(Self::Reset { sender_generation, reason })
             }
             DlpControlOpcode::LinkParameters => {
                 let sender_generation = ((word >> 18) & 0x3f) as u8;
@@ -287,12 +239,7 @@ impl DlpControlFrame {
                 if sender_generation == 0 || rx_window_units == 0 || burst_units == 0 {
                     return Err(Error::InvalidField);
                 }
-                Ok(Self::LinkParameters {
-                    kind,
-                    sender_generation,
-                    rx_window_units,
-                    burst_units,
-                })
+                Ok(Self::LinkParameters { kind, sender_generation, rx_window_units, burst_units })
             }
         }
     }
@@ -355,11 +302,7 @@ impl DlpManagedEndpoint {
         Ok(Self::build(endpoint, config, max_burst_flits))
     }
 
-    pub fn unconfigured(
-        link_local_suffix: u64,
-        config: EndpointConfig,
-        max_burst_flits: u32,
-    ) -> Result<Self> {
+    pub fn unconfigured(link_local_suffix: u64, config: EndpointConfig, max_burst_flits: u32) -> Result<Self> {
         validate_parameter_value(config.rx_buffer_flits)?;
         validate_parameter_value(max_burst_flits)?;
         if config.control_window_flits != DLP_RESERVED_CONTROL_WINDOW_FLITS {
@@ -400,30 +343,14 @@ impl DlpManagedEndpoint {
         }
     }
 
-    pub const fn control_state(&self) -> DlpControlState {
-        self.state
-    }
-
-    pub const fn negotiated_profile(&self) -> Option<DlpNegotiatedProfile> {
-        self.negotiated
-    }
-
-    pub const fn local_generation(&self) -> u8 {
-        self.local_generation
-    }
-
-    pub const fn peer_generation(&self) -> Option<u8> {
-        self.peer_generation
-    }
-
-    pub fn control_pending(&self) -> bool {
-        !self.control_tx.is_empty()
-    }
+    pub const fn control_state(&self) -> DlpControlState { self.state }
+    pub const fn negotiated_profile(&self) -> Option<DlpNegotiatedProfile> { self.negotiated }
+    pub const fn local_generation(&self) -> u8 { self.local_generation }
+    pub const fn peer_generation(&self) -> Option<u8> { self.peer_generation }
+    pub fn control_pending(&self) -> bool { !self.control_tx.is_empty() }
 
     pub fn carrier_up(&mut self) -> Result<()> {
-        if self.state != DlpControlState::Down {
-            return Err(Error::InvalidState);
-        }
+        if self.state != DlpControlState::Down { return Err(Error::InvalidState); }
         self.restart_negotiation(false, false);
         Ok(())
     }
@@ -437,19 +364,12 @@ impl DlpManagedEndpoint {
     }
 
     pub fn request_reset(&mut self, reason: u32) -> Result<()> {
-        if self.state == DlpControlState::Down {
-            return Err(Error::LinkDown);
-        }
-        if reason > 0x0f {
-            return Err(Error::InvalidField);
-        }
+        if self.state == DlpControlState::Down { return Err(Error::LinkDown); }
+        if reason > 0x0f { return Err(Error::InvalidField); }
         let old_generation = self.local_generation;
         self.endpoint.link_detached();
         self.control_tx.clear();
-        self.control_tx.push_back(DlpControlFrame::Reset {
-            sender_generation: old_generation,
-            reason: reason as u8,
-        });
+        self.control_tx.push_back(DlpControlFrame::Reset { sender_generation: old_generation, reason: reason as u8 });
         self.local_generation = next_generation(self.local_generation);
         self.peer_generation = None;
         self.clear_negotiation_state();
@@ -468,15 +388,11 @@ impl DlpManagedEndpoint {
             DlpControlFrame::Hello { .. } => self.on_hello(frame),
             DlpControlFrame::Reset { .. } => self.on_reset(frame),
             DlpControlFrame::Capabilities { .. } => {
-                if !self.frame_is_current(frame) {
-                    return Ok(());
-                }
+                if !self.frame_is_current(frame) { return Ok(()); }
                 self.on_capabilities(frame)
             }
             DlpControlFrame::LinkParameters { .. } => {
-                if !self.frame_is_current(frame) {
-                    return Ok(());
-                }
+                if !self.frame_is_current(frame) { return Ok(()); }
                 self.on_link_parameters(frame)
             }
         }
@@ -509,51 +425,33 @@ impl DlpManagedEndpoint {
     }
 
     pub fn poll_tx_flit(&mut self) -> Result<Option<Flit>> {
-        if !self.data_path_active() {
-            return Err(Error::LinkDown);
-        }
+        if !self.data_path_active() { return Err(Error::LinkDown); }
         self.maybe_retry_data_credit_request();
         self.endpoint.poll_tx_flit()
     }
 
     pub fn poll_tx_frame(&mut self) -> Result<Option<GnetFrame>> {
-        if !self.data_path_active() {
-            return Err(Error::LinkDown);
-        }
+        if !self.data_path_active() { return Err(Error::LinkDown); }
         self.maybe_retry_data_credit_request();
         self.endpoint.poll_tx_frame()
     }
 
     pub fn receive_flit(&mut self, flit: Flit, now: u64) -> Result<bool> {
-        if !self.data_path_active() {
-            return Err(Error::LinkDown);
-        }
-        let limit = self
-            .negotiated
-            .ok_or(Error::InvalidState)?
-            .peer_rx_buffer_flits;
+        if !self.data_path_active() { return Err(Error::LinkDown); }
+        let limit = self.negotiated.ok_or(Error::InvalidState)?.peer_rx_buffer_flits;
         self.endpoint.receive_managed_flit(flit, now, limit)
     }
 
     pub fn receive_frame(&mut self, frame: GnetFrame, now: u64) -> Result<bool> {
-        if !self.data_path_active() {
-            return Err(Error::LinkDown);
-        }
-        let limit = self
-            .negotiated
-            .ok_or(Error::InvalidState)?
-            .peer_rx_buffer_flits;
+        if !self.data_path_active() { return Err(Error::LinkDown); }
+        let limit = self.negotiated.ok_or(Error::InvalidState)?.peer_rx_buffer_flits;
         self.endpoint.receive_managed_frame(frame, now, limit)
     }
 
     fn restart_negotiation(&mut self, increment_generation: bool, preserve_control: bool) {
         self.endpoint.link_detached();
-        if increment_generation {
-            self.local_generation = next_generation(self.local_generation);
-        }
-        if !preserve_control {
-            self.control_tx.clear();
-        }
+        if increment_generation { self.local_generation = next_generation(self.local_generation); }
+        if !preserve_control { self.control_tx.clear(); }
         self.clear_negotiation_state();
         self.state = DlpControlState::Hello;
         self.queue_hello_initial();
@@ -581,48 +479,22 @@ impl DlpManagedEndpoint {
     }
 
     fn queue_hello_initial(&mut self) {
-        self.control_tx.push_back(DlpControlFrame::Hello {
-            kind: DlpHelloKind::Initial,
-            sender_generation: self.local_generation,
-            peer_generation: 0,
-        });
+        self.control_tx.push_back(DlpControlFrame::Hello { kind: DlpHelloKind::Initial, sender_generation: self.local_generation, peer_generation: 0 });
     }
 
     fn queue_hello_ack(&mut self, peer_generation: u8) {
-        self.control_tx.push_back(DlpControlFrame::Hello {
-            kind: DlpHelloKind::Acknowledgement,
-            sender_generation: self.local_generation,
-            peer_generation,
-        });
+        self.control_tx.push_back(DlpControlFrame::Hello { kind: DlpHelloKind::Acknowledgement, sender_generation: self.local_generation, peer_generation });
         self.hello_ack_sent = true;
     }
 
     fn on_hello(&mut self, frame: DlpControlFrame) -> Result<()> {
-        let DlpControlFrame::Hello {
-            kind,
-            sender_generation,
-            peer_generation,
-        } = frame
-        else {
-            unreachable!()
-        };
-
+        let DlpControlFrame::Hello { kind, sender_generation, peer_generation } = frame else { unreachable!() };
         match kind {
             DlpHelloKind::Initial => {
                 if let Some(current) = self.peer_generation {
                     if sender_generation != current {
-                        // While a carrier remains present, a legitimate new
-                        // peer generation is exactly the next generation. Any
-                        // other mismatched HELLO is stale/reordered traffic.
-                        if sender_generation != next_generation(current) {
-                            return Ok(());
-                        }
-                        let was_live = matches!(
-                            self.state,
-                            DlpControlState::Negotiate
-                                | DlpControlState::CreditSync
-                                | DlpControlState::Up
-                        );
+                        if sender_generation != next_generation(current) { return Ok(()); }
+                        let was_live = matches!(self.state, DlpControlState::Negotiate | DlpControlState::CreditSync | DlpControlState::Up);
                         self.restart_negotiation(was_live, false);
                     }
                 } else if self.state == DlpControlState::Down {
@@ -633,14 +505,10 @@ impl DlpManagedEndpoint {
                 self.maybe_start_capability_exchange()?;
             }
             DlpHelloKind::Acknowledgement => {
-                if peer_generation != self.local_generation {
-                    return Ok(());
-                }
+                if peer_generation != self.local_generation { return Ok(()); }
                 match self.peer_generation {
                     Some(g) if g != sender_generation => {
-                        if sender_generation != next_generation(g) {
-                            return Ok(());
-                        }
+                        if sender_generation != next_generation(g) { return Ok(()); }
                         self.restart_negotiation(true, false);
                         self.peer_generation = Some(sender_generation);
                         self.queue_hello_ack(sender_generation);
@@ -659,9 +527,7 @@ impl DlpManagedEndpoint {
     }
 
     fn maybe_start_capability_exchange(&mut self) -> Result<()> {
-        if !self.hello_ack_sent || !self.hello_ack_received || self.peer_generation.is_none() {
-            return Ok(());
-        }
+        if !self.hello_ack_sent || !self.hello_ack_received || self.peer_generation.is_none() { return Ok(()); }
         self.state = DlpControlState::Negotiate;
         if !self.cap_offer_sent {
             self.control_tx.push_back(DlpControlFrame::Capabilities {
@@ -685,25 +551,12 @@ impl DlpManagedEndpoint {
     }
 
     fn on_capabilities(&mut self, frame: DlpControlFrame) -> Result<()> {
-        let DlpControlFrame::Capabilities {
-            kind,
-            profiles,
-            rates,
-            ..
-        } = frame
-        else {
-            unreachable!()
-        };
-        if self.state != DlpControlState::Negotiate {
-            return Err(Error::InvalidState);
-        }
-
+        let DlpControlFrame::Capabilities { kind, profiles, rates, .. } = frame else { unreachable!() };
+        if self.state != DlpControlState::Negotiate { return Err(Error::InvalidState); }
         match kind {
             DlpCapabilityKind::Offer => {
                 if let Some(old) = self.peer_cap_offer {
-                    if old.profiles != profiles || old.rates != rates {
-                        return Err(Error::InvalidField);
-                    }
+                    if old.profiles != profiles || old.rates != rates { return Err(Error::InvalidField); }
                 } else {
                     self.peer_cap_offer = Some(PeerCapabilityOffer { profiles, rates });
                 }
@@ -725,9 +578,7 @@ impl DlpManagedEndpoint {
                 let offer = self.peer_cap_offer.ok_or(Error::InvalidState)?;
                 let expected_mode = choose_vc_mode(self.endpoint_config.vc_mode, offer.profiles)?;
                 let expected_rate = choose_rate(RATE_ALL, offer.rates)?;
-                if profiles != selected_mode_flag(expected_mode) || rates != expected_rate {
-                    return Err(Error::InvalidField);
-                }
+                if profiles != selected_mode_flag(expected_mode) || rates != expected_rate { return Err(Error::InvalidField); }
                 if !self.cap_confirmation_sent {
                     self.control_tx.push_back(DlpControlFrame::Capabilities {
                         kind: DlpCapabilityKind::Confirmation,
@@ -741,9 +592,7 @@ impl DlpManagedEndpoint {
             DlpCapabilityKind::Confirmation => {
                 let mode = self.selected_mode.ok_or(Error::InvalidState)?;
                 let rate = self.selected_rate.ok_or(Error::InvalidState)?;
-                if profiles != selected_mode_flag(mode) || rates != rate {
-                    return Err(Error::InvalidField);
-                }
+                if profiles != selected_mode_flag(mode) || rates != rate { return Err(Error::InvalidField); }
                 self.cap_confirmation_received = true;
             }
         }
@@ -751,32 +600,16 @@ impl DlpManagedEndpoint {
     }
 
     fn on_link_parameters(&mut self, frame: DlpControlFrame) -> Result<()> {
-        let DlpControlFrame::LinkParameters {
-            kind,
-            rx_window_units,
-            burst_units,
-            ..
-        } = frame
-        else {
-            unreachable!()
-        };
-        if self.state != DlpControlState::Negotiate {
-            return Err(Error::InvalidState);
-        }
+        let DlpControlFrame::LinkParameters { kind, rx_window_units, burst_units, .. } = frame else { unreachable!() };
+        if self.state != DlpControlState::Negotiate { return Err(Error::InvalidState); }
         let rx = decode_parameter_units(rx_window_units)?;
         let burst = decode_parameter_units(burst_units)?;
-
         match kind {
             DlpCapabilityKind::Offer => {
                 if let Some(old) = self.peer_params_offer {
-                    if old.rx_buffer_flits != rx || old.max_burst_flits != burst {
-                        return Err(Error::InvalidField);
-                    }
+                    if old.rx_buffer_flits != rx || old.max_burst_flits != burst { return Err(Error::InvalidField); }
                 } else {
-                    self.peer_params_offer = Some(PeerParameterOffer {
-                        rx_buffer_flits: rx,
-                        max_burst_flits: burst,
-                    });
+                    self.peer_params_offer = Some(PeerParameterOffer { rx_buffer_flits: rx, max_burst_flits: burst });
                 }
                 let selected_burst = self.max_burst_flits.min(burst);
                 self.selected_peer_rx = Some(rx);
@@ -794,9 +627,7 @@ impl DlpManagedEndpoint {
             DlpCapabilityKind::Selection => {
                 let offer = self.peer_params_offer.ok_or(Error::InvalidState)?;
                 let expected_burst = self.max_burst_flits.min(offer.max_burst_flits);
-                if rx != self.endpoint_config.rx_buffer_flits || burst != expected_burst {
-                    return Err(Error::InvalidField);
-                }
+                if rx != self.endpoint_config.rx_buffer_flits || burst != expected_burst { return Err(Error::InvalidField); }
                 if !self.params_confirmation_sent {
                     self.control_tx.push_back(DlpControlFrame::LinkParameters {
                         kind: DlpCapabilityKind::Confirmation,
@@ -810,9 +641,7 @@ impl DlpManagedEndpoint {
             DlpCapabilityKind::Confirmation => {
                 let peer_rx = self.selected_peer_rx.ok_or(Error::InvalidState)?;
                 let selected_burst = self.selected_burst.ok_or(Error::InvalidState)?;
-                if rx != peer_rx || burst != selected_burst {
-                    return Err(Error::InvalidField);
-                }
+                if rx != peer_rx || burst != selected_burst { return Err(Error::InvalidField); }
                 self.params_confirmation_received = true;
             }
         }
@@ -828,7 +657,6 @@ impl DlpManagedEndpoint {
         {
             return Ok(());
         }
-
         let mode = self.selected_mode.ok_or(Error::InvalidState)?;
         let burst = self.selected_burst.ok_or(Error::InvalidState)?;
         let peer_rx = self.selected_peer_rx.ok_or(Error::InvalidState)?;
@@ -848,15 +676,8 @@ impl DlpManagedEndpoint {
     }
 
     fn on_reset(&mut self, frame: DlpControlFrame) -> Result<()> {
-        let DlpControlFrame::Reset {
-            sender_generation, ..
-        } = frame
-        else {
-            unreachable!()
-        };
-        if self.peer_generation != Some(sender_generation) {
-            return Ok(());
-        }
+        let DlpControlFrame::Reset { sender_generation, .. } = frame else { unreachable!() };
+        if self.peer_generation != Some(sender_generation) { return Ok(()); }
         self.endpoint.link_detached();
         self.control_tx.clear();
         self.peer_generation = None;
@@ -868,20 +689,13 @@ impl DlpManagedEndpoint {
     }
 
     fn bind_credit_peer(&mut self, peer: GdpAddress) -> Result<()> {
-        if self.state != DlpControlState::CreditSync {
-            return Err(Error::InvalidState);
-        }
-        self.endpoint
-            .bind_managed_link_peer(peer, DLP_RESERVED_CONTROL_WINDOW_FLITS)
+        if self.state != DlpControlState::CreditSync { return Err(Error::InvalidState); }
+        self.endpoint.bind_managed_link_peer(peer, DLP_RESERVED_CONTROL_WINDOW_FLITS)
     }
 
     fn finish_credit_sync(&mut self) -> Result<()> {
-        if self.state != DlpControlState::CreditSync {
-            return Err(Error::InvalidState);
-        }
-        if self.endpoint.dlp().data_tx_credit() == 0 {
-            return Err(Error::NoCredit);
-        }
+        if self.state != DlpControlState::CreditSync { return Err(Error::InvalidState); }
+        if self.endpoint.dlp().data_tx_credit() == 0 { return Err(Error::NoCredit); }
         self.state = DlpControlState::Up;
         Ok(())
     }
@@ -889,16 +703,11 @@ impl DlpManagedEndpoint {
 
 impl Deref for DlpManagedEndpoint {
     type Target = Endpoint;
-
-    fn deref(&self) -> &Self::Target {
-        &self.endpoint
-    }
+    fn deref(&self) -> &Self::Target { &self.endpoint }
 }
 
 impl DerefMut for DlpManagedEndpoint {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.endpoint
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.endpoint }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -908,12 +717,7 @@ pub struct DlpDirectCable {
 }
 
 impl DlpDirectCable {
-    pub const fn new() -> Self {
-        Self {
-            carrier: false,
-            credit_bound: false,
-        }
-    }
+    pub const fn new() -> Self { Self { carrier: false, credit_bound: false } }
 
     fn both_up(a: &DlpManagedEndpoint, b: &DlpManagedEndpoint) -> bool {
         a.control_state() == DlpControlState::Up && b.control_state() == DlpControlState::Up
@@ -926,12 +730,8 @@ impl DlpDirectCable {
 
     pub fn attach(&mut self, a: &mut DlpManagedEndpoint, b: &mut DlpManagedEndpoint) -> Result<()> {
         if !self.carrier {
-            if a.control_state() == DlpControlState::Down {
-                a.carrier_up()?;
-            }
-            if b.control_state() == DlpControlState::Down {
-                b.carrier_up()?;
-            }
+            if a.control_state() == DlpControlState::Down { a.carrier_up()?; }
+            if b.control_state() == DlpControlState::Down { b.carrier_up()?; }
             self.carrier = true;
         }
 
@@ -939,52 +739,30 @@ impl DlpDirectCable {
             self.credit_bound = false;
             for _ in 0..512 {
                 let progress = Self::pump_control(a, b)?;
-                if Self::both_ready_for_credit(a, b) {
-                    break;
-                }
-                if !progress {
-                    return Err(Error::InvalidState);
-                }
+                if Self::both_ready_for_credit(a, b) { break; }
+                if !progress { return Err(Error::InvalidState); }
             }
         }
-        if !Self::both_ready_for_credit(a, b) {
-            return Err(Error::InvalidState);
-        }
+        if !Self::both_ready_for_credit(a, b) { return Err(Error::InvalidState); }
 
         if !self.credit_bound {
             let a_peer = b.link_local_address();
             let b_peer = a.link_local_address();
-            if a.control_state() == DlpControlState::CreditSync {
-                a.bind_credit_peer(a_peer)?;
-            }
-            if b.control_state() == DlpControlState::CreditSync {
-                b.bind_credit_peer(b_peer)?;
-            }
+            if a.control_state() == DlpControlState::CreditSync { a.bind_credit_peer(a_peer)?; }
+            if b.control_state() == DlpControlState::CreditSync { b.bind_credit_peer(b_peer)?; }
             self.credit_bound = true;
 
             for _ in 0..512 {
-                if a.dlp().data_tx_credit() != 0 && b.dlp().data_tx_credit() != 0 {
-                    break;
-                }
+                if a.dlp().data_tx_credit() != 0 && b.dlp().data_tx_credit() != 0 { break; }
                 let progress = Self::pump_data_once(a, b, 0)?;
-                if !progress {
-                    return Err(Error::InvalidState);
-                }
+                if !progress { return Err(Error::InvalidState); }
             }
-            if a.dlp().data_tx_credit() == 0 || b.dlp().data_tx_credit() == 0 {
-                return Err(Error::NoCredit);
-            }
-            if a.control_state() == DlpControlState::CreditSync {
-                a.finish_credit_sync()?;
-            }
-            if b.control_state() == DlpControlState::CreditSync {
-                b.finish_credit_sync()?;
-            }
+            if a.dlp().data_tx_credit() == 0 || b.dlp().data_tx_credit() == 0 { return Err(Error::NoCredit); }
+            if a.control_state() == DlpControlState::CreditSync { a.finish_credit_sync()?; }
+            if b.control_state() == DlpControlState::CreditSync { b.finish_credit_sync()?; }
         }
 
-        if !Self::both_up(a, b) {
-            return Err(Error::InvalidState);
-        }
+        if !Self::both_up(a, b) { return Err(Error::InvalidState); }
         Ok(())
     }
 
@@ -1001,21 +779,13 @@ impl DlpDirectCable {
         Ok(progress)
     }
 
-    fn pump_data_direction(
-        sender: &mut DlpManagedEndpoint,
-        receiver: &mut DlpManagedEndpoint,
-        now: u64,
-    ) -> Result<bool> {
-        if !sender.data_path_active() || !receiver.data_path_active() {
-            return Ok(false);
-        }
+    fn pump_data_direction(sender: &mut DlpManagedEndpoint, receiver: &mut DlpManagedEndpoint, now: u64) -> Result<bool> {
+        if !sender.data_path_active() || !receiver.data_path_active() { return Ok(false); }
         match sender.poll_tx_flit() {
             Ok(Some(flit)) => {
                 let reserved_control = flit.vcid.is_control();
                 receiver.receive_flit(flit, now)?;
-                if reserved_control {
-                    sender.dlp_mut().grant_control_tx_credit(1);
-                }
+                if reserved_control { sender.dlp_mut().grant_control_tx_credit(1); }
                 Ok(true)
             }
             Ok(None) | Err(Error::NoCredit) => Ok(false),
@@ -1023,40 +793,20 @@ impl DlpDirectCable {
         }
     }
 
-    fn pump_data_once(
-        a: &mut DlpManagedEndpoint,
-        b: &mut DlpManagedEndpoint,
-        now: u64,
-    ) -> Result<bool> {
+    fn pump_data_once(a: &mut DlpManagedEndpoint, b: &mut DlpManagedEndpoint, now: u64) -> Result<bool> {
         let mut progress = false;
-        if Self::pump_data_direction(a, b, now)? {
-            progress = true;
-        }
-        if Self::pump_data_direction(b, a, now)? {
-            progress = true;
-        }
+        if Self::pump_data_direction(a, b, now)? { progress = true; }
+        if Self::pump_data_direction(b, a, now)? { progress = true; }
         Ok(progress)
     }
 
-    pub fn pump(
-        &mut self,
-        a: &mut DlpManagedEndpoint,
-        b: &mut DlpManagedEndpoint,
-        now: u64,
-        max_transfers: usize,
-    ) -> Result<usize> {
-        if !Self::both_up(a, b) {
-            self.credit_bound = false;
-        }
+    pub fn pump(&mut self, a: &mut DlpManagedEndpoint, b: &mut DlpManagedEndpoint, now: u64, max_transfers: usize) -> Result<usize> {
+        if !Self::both_up(a, b) { self.credit_bound = false; }
         self.attach(a, b)?;
-
         let mut moved = 0usize;
         loop {
-            if moved >= max_transfers {
-                return Err(Error::BufferFull);
-            }
+            if moved >= max_transfers { return Err(Error::BufferFull); }
             let mut progress = false;
-
             if Self::pump_control(a, b)? {
                 moved += 1;
                 progress = true;
@@ -1065,15 +815,11 @@ impl DlpDirectCable {
                     self.attach(a, b)?;
                 }
             }
-
             if Self::pump_data_once(a, b, now)? {
                 moved += 1;
                 progress = true;
             }
-
-            if !progress {
-                return Ok(moved);
-            }
+            if !progress { return Ok(moved); }
         }
     }
 }
@@ -1083,29 +829,19 @@ fn validate_parameter_value(value: u32) -> Result<()> {
 }
 
 fn encode_parameter_units(value: u32) -> Result<u8> {
-    if value == 0 || value % DLP_CONTROL_PARAMETER_UNIT_FLITS != 0 {
-        return Err(Error::InvalidField);
-    }
+    if value == 0 || value % DLP_CONTROL_PARAMETER_UNIT_FLITS != 0 { return Err(Error::InvalidField); }
     let units = value / DLP_CONTROL_PARAMETER_UNIT_FLITS;
-    if units == 0 || units > u8::MAX as u32 {
-        return Err(Error::InvalidField);
-    }
+    if units == 0 || units > u8::MAX as u32 { return Err(Error::InvalidField); }
     Ok(units as u8)
 }
 
 fn decode_parameter_units(units: u8) -> Result<u32> {
-    if units == 0 {
-        return Err(Error::InvalidField);
-    }
+    if units == 0 { return Err(Error::InvalidField); }
     Ok(units as u32 * DLP_CONTROL_PARAMETER_UNIT_FLITS)
 }
 
 fn next_generation(generation: u8) -> u8 {
-    if generation >= 63 {
-        1
-    } else {
-        generation + 1
-    }
+    if generation >= 63 { 1 } else { generation + 1 }
 }
 
 fn supported_mode_flags(max_mode: VcMode) -> u8 {
