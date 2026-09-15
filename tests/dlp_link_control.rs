@@ -94,8 +94,10 @@ fn two_unconfigured_hosts_negotiate_then_establish_gts_and_exchange_data() {
 
 #[test]
 fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
-    let mut client = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0001), cfg(40, VcMode::Two, 40), 32).unwrap();
-    let mut server = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0002), cfg(40, VcMode::Two, 40), 32).unwrap();
+    // Use a window aligned to the 32-flit GDP frames used by this regression.
+    // A 40-flit window leaves an unusable remainder and cannot reach exactly zero.
+    let mut client = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0001), cfg(64, VcMode::Two, 64), 32).unwrap();
+    let mut server = DlpManagedEndpoint::new(GdpAddress(0x3000_0000_0000_0002), cfg(64, VcMode::Two, 64), 32).unwrap();
     let mut cable = DlpDirectCable::new(); cable.attach(&mut client, &mut server).unwrap();
     let service = ServiceSelector::registered(1).unwrap(); server.listen(service, ListenerConfig::default());
     let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional); let ch = client.connect(server.address(), service, profile).unwrap();
@@ -103,22 +105,29 @@ fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
 
     // Consume the entire advertised data window without returning credit so the
     // next queued GDP frame must trigger a link-local CREDIT_REQUEST.
-    while client.dlp().data_tx_credit() != 0 {
+    for drain_attempt in 0..8 {
+        if client.dlp().data_tx_credit() == 0 { break; }
+        let before = client.dlp().data_tx_credit();
         client.send(ch, 0, b"drain credit", 1).unwrap();
-        loop {
+        let mut sent_data = false;
+        for poll_attempt in 0..256 {
             match client.poll_tx_frame() {
                 Ok(Some(frame)) if frame.traffic == LinkTraffic::Data => {
                     server.receive_frame(frame, 1).unwrap();
+                    sent_data = true;
                     break;
                 }
-                Ok(Some(frame)) => {
-                    server.receive_frame(frame, 1).unwrap();
-                }
+                Ok(Some(frame)) => { server.receive_frame(frame, 1).unwrap(); }
                 Ok(None) | Err(Error::NoCredit) => {}
-                Err(e) => panic!("unexpected drain error: {e:?}"),
+                Err(e) => panic!("unexpected drain error at drain {drain_attempt}, poll {poll_attempt}: {e:?}"),
             }
         }
+        let after = client.dlp().data_tx_credit();
+        eprintln!("DLP credit drain {drain_attempt}: before={before}, after={after}, queued={}", client.dlp().queued_data_flits());
+        assert!(sent_data, "credit drain stalled at attempt {drain_attempt}: credit={after}, queued={}", client.dlp().queued_data_flits());
+        assert!(after < before, "credit drain made no progress at attempt {drain_attempt}: before={before}, after={after}");
     }
+    assert_eq!(client.dlp().data_tx_credit(), 0, "failed to exhaust aligned link credit; queued={}", client.dlp().queued_data_flits());
 
     client.send(ch, 0, b"first packet", 1).unwrap(); client.send(ch, 0, b"second packet", 1).unwrap();
     let mut dropped_request = None;
