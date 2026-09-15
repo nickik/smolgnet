@@ -4,12 +4,15 @@ on:
   pull_request:
     paths:
       - 'src/static_router.rs'
+      - 'src/cycle_router.rs'
       - 'src/error.rs'
       - 'src/lib.rs'
       - 'p4-static-router/**'
       - 'tests/static_p4_router.rs'
+      - 'tests/cycles.rs'
       - 'docs/STATIC_P4_ROUTER_TODO.md'
       - 'docs/ADVANCED_ROUTER_DESIGN.md'
+      - 'docs/avoid circular dependency.md'
       - 'Cargo.toml'
       - '.github/workflows/static-p4-router.yml'
   workflow_dispatch:
@@ -28,11 +31,11 @@ jobs:
         with:
           components: rustfmt
       - name: Check router source formatting
-        run: rustfmt --check src/static_router.rs tests/static_p4_router.rs
+        run: rustfmt --check src/static_router.rs src/cycle_router.rs tests/static_p4_router.rs tests/cycles.rs
       - name: Check static P4 router
-        run: cargo check --features p4-router --test static_p4_router
+        run: cargo check --features p4-router --test static_p4_router --test cycles
       - name: Run static P4 router tests with bounded runtime and debug output
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=5s 90s \
-            cargo test --features p4-router --test static_p4_router -- --nocapture --test-threads=1
+            cargo test --features p4-router --test static_p4_router --test cycles -- --nocapture --test-threads=1
