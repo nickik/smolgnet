@@ -157,6 +157,11 @@ path = "tests/static_p4_router.rs"
 required-features = ["p4-router"]
 
 [[test]]
+name = "dynamic_p4_router"
+path = "tests/dynamic_p4_router.rs"
+required-features = ["p4-router"]
+
+[[test]]
 name = "cycles"
 path = "tests/cycles.rs"
 required-features = ["p4-router"]
