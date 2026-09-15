@@ -4,6 +4,8 @@ const LEFT_PREFIX: u64 = 0x3101_0000_0000_0000;
 const RIGHT_PREFIX: u64 = 0x4202_0000_0000_0000;
 const LEFT_ROUTER_ADDRESS: GdpAddress = GdpAddress(LEFT_PREFIX | 0x0001);
 const RIGHT_ROUTER_ADDRESS: GdpAddress = GdpAddress(RIGHT_PREFIX | 0x0001);
+const LEFT_ROUTER_ID: RouterId = RouterId(0x1111_1111_1111_1111);
+const RIGHT_ROUTER_ID: RouterId = RouterId(0x2222_2222_2222_2222);
 const SWITCH_ROUTER_PORT: u16 = 8;
 const SWITCH_PORTS: u16 = 9;
 const PEERS: usize = 8;
@@ -28,26 +30,37 @@ fn peer(prefix: u64, marker_base: u8, index: usize) -> Peer {
     }
 }
 
-fn left_router() -> StaticP4Router {
+fn left_router() -> DynamicP4Router {
     let lan = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0010))
         .with_connected_network(prefix(LEFT_PREFIX), LEFT_ROUTER_ADDRESS);
     let inter_router = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0011));
-    StaticP4Router::new(RouterStartupConfig::new(
-        vec![lan, inter_router],
-        vec![StaticRouteConfig::direct(prefix(RIGHT_PREFIX), 1)],
-    ))
-    .unwrap()
+    DynamicP4Router::new(LEFT_ROUTER_ID, vec![lan, inter_router], vec![]).unwrap()
 }
 
-fn right_router() -> StaticP4Router {
+fn right_router() -> DynamicP4Router {
     let inter_router = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0020));
     let lan = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0021))
         .with_connected_network(prefix(RIGHT_PREFIX), RIGHT_ROUTER_ADDRESS);
-    StaticP4Router::new(RouterStartupConfig::new(
-        vec![inter_router, lan],
-        vec![StaticRouteConfig::direct(prefix(LEFT_PREFIX), 0)],
-    ))
-    .unwrap()
+    DynamicP4Router::new(RIGHT_ROUTER_ID, vec![inter_router, lan], vec![]).unwrap()
+}
+
+fn exchange_connected_routes(left: &mut DynamicP4Router, right: &mut DynamicP4Router) {
+    for advertisement in left.advertisements_for(RIGHT_ROUTER_ID, RouteMetric::DEFAULT_LINK) {
+        right
+            .receive_advertisement(LEFT_ROUTER_ID, 0, advertisement)
+            .unwrap();
+    }
+    for advertisement in right.advertisements_for(LEFT_ROUTER_ID, RouteMetric::DEFAULT_LINK) {
+        left.receive_advertisement(RIGHT_ROUTER_ID, 1, advertisement)
+            .unwrap();
+    }
+
+    assert_eq!(left.learned_routes().len(), 1);
+    assert_eq!(right.learned_routes().len(), 1);
+    assert_eq!(left.learned_routes()[0].prefix, prefix(RIGHT_PREFIX));
+    assert_eq!(left.learned_routes()[0].egress_port, 1);
+    assert_eq!(right.learned_routes()[0].prefix, prefix(LEFT_PREFIX));
+    assert_eq!(right.learned_routes()[0].egress_port, 0);
 }
 
 fn switch(peers: &[Peer; PEERS]) -> StaticP4Switch {
@@ -100,7 +113,7 @@ fn packet(source: Peer, destination: Peer, flow: usize, direction: u8) -> GdpPac
 
 fn route_to_link(
     switch: &mut StaticP4Switch,
-    router: &mut StaticP4Router,
+    router: &mut DynamicP4Router,
     source: Peer,
     packet: GdpPacket,
     router_ingress: u16,
@@ -132,7 +145,7 @@ fn route_to_link(
 }
 
 fn deliver_from_link(
-    router: &mut StaticP4Router,
+    router: &mut DynamicP4Router,
     switch: &mut StaticP4Switch,
     destination: Peer,
     packet: GdpPacket,
@@ -203,6 +216,7 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
     let mut right_switch = switch(&right);
     let mut left_router = left_router();
     let mut right_router = right_router();
+    exchange_connected_routes(&mut left_router, &mut right_router);
 
     let mut left_dlp = dlp_link();
     let mut right_dlp = dlp_link();
@@ -212,9 +226,9 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
     assert_eq!(left_dlp.endpoint().vc_mode(), VcMode::Four);
     assert_eq!(right_dlp.endpoint().vc_mode(), VcMode::Four);
 
-    // All sixteen endpoints become ready at once. The production egress
-    // scheduler, rather than an integration-test admission helper, performs
-    // fair flow admission into the three ordinary VC4 data channels.
+    // Cross-router reachability has been learned through Stage 3 route
+    // exchange. The production egress scheduler performs fair flow admission
+    // into the three ordinary VC4 data channels.
     let mut left_scheduler = RouterEgressScheduler::new();
     let mut right_scheduler = RouterEgressScheduler::new();
     for flow in 0..PEERS {
@@ -267,8 +281,6 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
         let l2r_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..l2r_count].to_vec();
         let r2l_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..r2l_count].to_vec();
 
-        // Full-duplex link: each scheduler round presents at most one packet
-        // per selected flow. DLP alone assigns/recycles the numeric VCIDs.
         let l2r = transmit_batch(&mut left_dlp, &mut right_dlp, &l2r_flows, &l2r_expected);
         let r2l = transmit_batch(&mut right_dlp, &mut left_dlp, &r2l_flows, &r2l_expected);
 
