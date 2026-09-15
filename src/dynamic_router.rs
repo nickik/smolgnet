@@ -4,12 +4,12 @@ use alloc::vec::Vec;
 
 use crate::dynamic_routing::{RouteMetric, RouteOrigin, RouterId};
 use crate::error::{Error, Result};
-use crate::router_rib::{RouterRib, SelectedRoute};
+use crate::router_rib::{RouteUpdate, RouterRib, SelectedRoute};
 use crate::static_router::{
     RouterDisposition, RouterPortConfig, RouterPortId, RouterStartupConfig, StaticP4Router,
     StaticRouteConfig,
 };
-use crate::wire::gctl_routing::RouteAdvertise;
+use crate::wire::gctl_routing::{RouteAdvertise, RouteWithdraw};
 use crate::wire::gdp::GdpPacket;
 
 pub struct DynamicP4Router {
@@ -66,6 +66,16 @@ impl DynamicP4Router {
         self.rib.advertisements_for(neighbor, outgoing_metric)
     }
 
+    pub fn updates_for(
+        &self,
+        neighbor: RouterId,
+        outgoing_metric: RouteMetric,
+        changed_prefixes: &[crate::routing::GdpPrefix],
+    ) -> Vec<RouteUpdate> {
+        self.rib
+            .updates_for(neighbor, outgoing_metric, changed_prefixes)
+    }
+
     pub fn receive_advertisement(
         &mut self,
         from: RouterId,
@@ -75,6 +85,26 @@ impl DynamicP4Router {
         self.rib
             .receive_advertisement(from, egress_port, advertisement)?;
         self.rebuild_forwarding()
+    }
+
+    pub fn receive_withdrawal(
+        &mut self,
+        from: RouterId,
+        withdrawal: RouteWithdraw,
+    ) -> Result<bool> {
+        let removed = self.rib.receive_withdrawal(from, withdrawal)?;
+        if removed {
+            self.rebuild_forwarding()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn neighbor_down(&mut self, neighbor: RouterId) -> Result<Vec<crate::routing::GdpPrefix>> {
+        let changed = self.rib.remove_learned_from(neighbor);
+        if !changed.is_empty() {
+            self.rebuild_forwarding()?;
+        }
+        Ok(changed)
     }
 
     pub fn process(
