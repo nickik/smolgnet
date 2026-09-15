@@ -10,6 +10,8 @@ on:
       - 'p4-static-switch/**'
       - 'src/wire/gctl.rs'
       - 'tests/network_simulation.rs'
+      - 'tests/upstream_64bit_topology.rs'
+      - 'tests/two_switch_16_peer_topology.rs'
       - 'Cargo.toml'
       - '.github/workflows/network-simulation.yml'
   workflow_dispatch:
@@ -30,9 +32,9 @@ jobs:
       - name: Check switch source formatting
         run: rustfmt --check src/static_switch.rs
       - name: Check simulation build
-        run: cargo check --features p4-router,p4-switch --test network_simulation
+        run: cargo check --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology
       - name: Run stable topology scenarios
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=5s 120s \
-            cargo test --features p4-router,p4-switch --test network_simulation -- --nocapture --test-threads=1
+            cargo test --features p4-router,p4-switch --test network_simulation --test upstream_64bit_topology --test two_switch_16_peer_topology -- --nocapture --test-threads=1

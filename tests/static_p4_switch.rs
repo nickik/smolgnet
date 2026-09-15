@@ -27,10 +27,24 @@ fn local_packet(prefix: u64, destination: u16, source: u16) -> GdpPacket {
 }
 
 #[test]
-fn switch_has_exactly_eight_ports() {
+fn switch_defaults_to_exactly_eight_ports() {
     let switch = StaticP4Switch::new();
     assert_eq!(switch.physical_port_count(), 8);
     assert_eq!(SWITCH_PORT_COUNT, 8);
+}
+
+#[test]
+fn simulation_switch_can_use_nine_ports_without_changing_default() {
+    let mut switch = StaticP4Switch::with_port_count(9).unwrap();
+    assert_eq!(switch.physical_port_count(), 9);
+    let node = GdpAddress(0x1200_0000_0000_0042);
+    switch.register_node(node, 8).unwrap();
+    assert!(matches!(
+        switch
+            .process(0, packet(node.0, 0x9900_0000_0000_0001, 8))
+            .unwrap(),
+        SwitchDisposition::Forward { egress_port: 8, .. }
+    ));
 }
 
 #[test]
@@ -146,12 +160,22 @@ fn unknown_destination_and_hairpin_are_dropped() {
 }
 
 #[test]
-fn local_form_gdp_is_never_switched() {
+fn local_form_gdp_is_switched_only_to_known_local_nodes() {
     let mut switch = StaticP4Switch::new();
-    let effective_destination = GdpAddress(0x4400_0000_0000_0042);
+    let prefix = 0x4400_0000_0000_0000;
+    let effective_destination = GdpAddress(prefix | 0x0042);
     switch.register_node(effective_destination, 7).unwrap();
-    let local = local_packet(0x4400_0000_0000_0000, 0x0042, 0x0001);
-    assert_eq!(switch.process(0, local).unwrap(), SwitchDisposition::Drop);
+    let local = local_packet(prefix, 0x0042, 0x0001);
+    assert_eq!(
+        switch.process(0, local.clone()).unwrap(),
+        SwitchDisposition::Forward {
+            egress_port: 7,
+            packet: local,
+        }
+    );
+
+    let unknown = local_packet(prefix, 0x0099, 0x0001);
+    assert_eq!(switch.process(0, unknown).unwrap(), SwitchDisposition::Drop);
 }
 
 #[test]
