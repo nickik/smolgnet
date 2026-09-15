@@ -219,7 +219,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
     a.receive_advertisement(c_id, 1, c_to_a[0]).unwrap();
     assert_eq!(a.learned_routes()[0].learned_from, Some(b_id));
 
-    let packet = match a.process(1, packet(source, destination)).unwrap() {
+    let preferred_packet = match a.process(1, packet(source, destination)).unwrap() {
         RouterDisposition::Forward {
             egress_port,
             packet,
@@ -229,7 +229,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
         }
         other => panic!("A did not select preferred path through B: {other:?}"),
     };
-    let packet = match b.process(0, packet).unwrap() {
+    let preferred_packet = match b.process(0, preferred_packet).unwrap() {
         RouterDisposition::Forward {
             egress_port,
             packet,
@@ -240,7 +240,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
         other => panic!("B did not forward to D: {other:?}"),
     };
     assert!(matches!(
-        d.process(0, packet).unwrap(),
+        d.process(0, preferred_packet).unwrap(),
         RouterDisposition::Punt { .. }
     ));
 
@@ -253,7 +253,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
     assert!(a.receive_withdrawal(b_id, withdrawal).unwrap());
     assert_eq!(a.learned_routes()[0].learned_from, Some(c_id));
 
-    let packet = match a.process(0, packet(source, destination)).unwrap() {
+    let alternate_packet = match a.process(0, packet(source, destination)).unwrap() {
         RouterDisposition::Forward {
             egress_port,
             packet,
@@ -263,7 +263,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
         }
         other => panic!("A did not reconverge to C: {other:?}"),
     };
-    let packet = match c.process(0, packet).unwrap() {
+    let alternate_packet = match c.process(0, alternate_packet).unwrap() {
         RouterDisposition::Forward {
             egress_port,
             packet,
@@ -274,7 +274,7 @@ fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
         other => panic!("C did not forward alternate traffic to D: {other:?}"),
     };
     assert!(matches!(
-        d.process(1, packet).unwrap(),
+        d.process(1, alternate_packet).unwrap(),
         RouterDisposition::Punt { .. }
     ));
 
