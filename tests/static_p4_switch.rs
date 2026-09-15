@@ -13,6 +13,19 @@ fn packet(destination: u64, source: u64, hop: u8) -> GdpPacket {
     GdpPacket::new(header, vec![0x5a; 32]).unwrap()
 }
 
+fn local_packet(prefix: u64, destination: u16, source: u16) -> GdpPacket {
+    let header = GdpHeader::local(
+        GdpType::Gts,
+        SizeClass::Ctrl32,
+        3,
+        prefix,
+        source,
+        destination,
+    )
+    .unwrap();
+    GdpPacket::new(header, vec![0x3c; 32]).unwrap()
+}
+
 #[test]
 fn switch_has_exactly_eight_ports() {
     let switch = StaticP4Switch::new();
@@ -58,9 +71,9 @@ fn invalid_ports_and_link_local_nodes_are_rejected() {
 #[test]
 fn forwards_zero_to_seven_without_modifying_gdp() {
     let mut switch = StaticP4Switch::new();
-    let destination = GdpAddress(0x1200_0000_0000_0007);
+    let destination = GdpAddress(0x1234_5678_9abc_def0);
     switch.register_node(destination, 7).unwrap();
-    let original = packet(destination.0, 0x9900_0000_0000_0001, 9);
+    let original = packet(destination.0, 0x9900_1234_5678_0001, 9);
 
     match switch.process(0, original.clone()).unwrap() {
         SwitchDisposition::Forward {
@@ -92,6 +105,31 @@ fn forwards_seven_to_zero_without_modifying_gdp() {
 }
 
 #[test]
+fn every_port_can_be_ingress_and_egress() {
+    for ingress in 0..SWITCH_PORT_COUNT {
+        for egress in 0..SWITCH_PORT_COUNT {
+            if ingress == egress {
+                continue;
+            }
+            let mut switch = StaticP4Switch::new();
+            let destination = GdpAddress(
+                0x5000_0000_0000_0000 | ((ingress as u64) << 8) | egress as u64,
+            );
+            switch.register_node(destination, egress).unwrap();
+            let original = packet(destination.0, 0x6600_0000_0000_0000 | ingress as u64, 11);
+            assert_eq!(
+                switch.process(ingress, original.clone()).unwrap(),
+                SwitchDisposition::Forward {
+                    egress_port: egress,
+                    packet: original,
+                },
+                "failed {ingress} -> {egress}"
+            );
+        }
+    }
+}
+
+#[test]
 fn unknown_destination_and_hairpin_are_dropped() {
     let mut switch = StaticP4Switch::new();
     let destination = GdpAddress(0x3300_0000_0000_0001);
@@ -106,6 +144,15 @@ fn unknown_destination_and_hairpin_are_dropped() {
         switch.process(0, original).unwrap(),
         SwitchDisposition::Drop
     );
+}
+
+#[test]
+fn local_form_gdp_is_never_switched() {
+    let mut switch = StaticP4Switch::new();
+    let effective_destination = GdpAddress(0x4400_0000_0000_0042);
+    switch.register_node(effective_destination, 7).unwrap();
+    let local = local_packet(0x4400_0000_0000_0000, 0x0042, 0x0001);
+    assert_eq!(switch.process(0, local).unwrap(), SwitchDisposition::Drop);
 }
 
 #[test]
