@@ -1,0 +1,48 @@
+name: Canonical P4 Wire Definitions
+
+on:
+  pull_request:
+    paths:
+      - 'p4-common/**'
+      - 'p4-gdp/**'
+      - 'p4-gts/**'
+      - 'p4-static-router/**'
+      - 'p4-static-switch/**'
+      - 'src/p4_gdp.rs'
+      - 'src/p4_gts.rs'
+      - 'src/static_router.rs'
+      - 'src/static_switch.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/canonical-p4.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify protocol P4 has one owner
+        run: |
+          set -euxo pipefail
+          test "$(grep -R -l '^header gdp_base_h' --include='*.p4' . | wc -l)" -eq 1
+          test "$(grep -R -l '^header gts_kind_h' --include='*.p4' . | wc -l)" -eq 1
+          grep -q 'p4-common/gdp_wire.p4' p4-gdp/p4/gdp.p4
+          grep -q 'p4-common/gdp_wire.p4' p4-static-router/p4/router.p4
+          grep -q 'p4-common/gdp_wire.p4' p4-static-switch/p4/switch.p4
+          grep -q 'p4-common/gts_wire.p4' p4-gts/p4/gts.p4
+      - name: Check canonical GDP, GTS, router and switch P4 consumers
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 300s \
+            cargo test --features 'p4-gdp,p4-gts,p4-router,p4-switch' \
+              --test p4_gts_conformance \
+              --test p4_gts_tx_conformance \
+              --test static_p4_router \
+              --test static_p4_switch \
+              -- --nocapture --test-threads=1
