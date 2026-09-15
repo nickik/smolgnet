@@ -4,6 +4,8 @@ Status: **frozen for the smolgnet point-to-point implementation**.
 
 This document defines DLP behavior below GDP. GC3, GS3, shared-medium attachment, switching, and routing are out of scope.
 
+The router-facing packet interface is frozen separately in [`DLP_GDP_BOUNDARY.md`](DLP_GDP_BOUNDARY.md). That contract is authoritative for the boundary between DLP and GDP forwarding.
+
 ## Layer boundary
 
 ```text
@@ -113,7 +115,7 @@ Down -> Recovering -> Up
 
 `Up` enables normal DLP operation. Data credit still starts at zero after recovery and must be advertised again.
 
-A full reset increments the software generation and invalidates all queued traffic, partial receives, desynchronization state, and credit.
+A full reset increments the software generation and invalidates all queued traffic, partial receives, desynchronization state, credit, and completed packets not yet delivered upward to GDP.
 
 ## Deterministic conformance
 
@@ -129,7 +131,10 @@ The reference model tests:
 - per-VC desynchronization isolation;
 - reset clearing queues and credit;
 - recovery with credit re-established from zero;
-- deterministic complete packet exchange between two endpoints.
+- deterministic complete packet exchange between two endpoints;
+- incomplete physical input never crossing the GDP router boundary;
+- router forwarding through the packet-only `GdpPacketPort` contract;
+- automatic DLP lane/VC selection from GDP packet type.
 
 ## Hardware boundary
 
