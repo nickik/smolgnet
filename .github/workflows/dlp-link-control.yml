@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'src/dlp_control.rs'
+      - 'src/endpoint/core.rs'
+      - 'src/endpoint/link_api.rs'
       - 'src/lib.rs'
       - 'tests/dlp_link_control.rs'
       - 'Cargo.toml'
