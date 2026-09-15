@@ -62,3 +62,81 @@ fn learned_cross_router_routes_are_installed_without_static_configuration() {
         other => panic!("learned route was not installed into P4: {other:?}"),
     }
 }
+
+#[test]
+fn failed_neighbor_reprograms_p4_to_alternate_and_removes_stale_route() {
+    let local = RouterId::new(0x1000).unwrap();
+    let preferred = RouterId::new(0x2000).unwrap();
+    let alternate = RouterId::new(0x3000).unwrap();
+    let destination_prefix = prefix(0x5505_0000_0000_0000);
+    let destination = GdpAddress(0x5505_0000_0000_0123);
+    let source = GdpAddress(0x6606_0000_0000_0456);
+
+    let port0 = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0100));
+    let port1 = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0101));
+    let mut router = DynamicP4Router::new(local, vec![port0, port1], vec![]).unwrap();
+
+    router
+        .receive_advertisement(
+            preferred,
+            0,
+            RouteAdvertise {
+                advertiser: preferred,
+                prefix: destination_prefix,
+                origin: RouteOrigin::Learned,
+                metric: RouteMetric(100),
+            },
+        )
+        .unwrap();
+    router
+        .receive_advertisement(
+            alternate,
+            1,
+            RouteAdvertise {
+                advertiser: alternate,
+                prefix: destination_prefix,
+                origin: RouteOrigin::Learned,
+                metric: RouteMetric(200),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(router.learned_routes()[0].learned_from, Some(preferred));
+    match router.process(1, packet(source, destination)).unwrap() {
+        RouterDisposition::Forward { egress_port, .. } => assert_eq!(egress_port, 0),
+        other => panic!("preferred learned route was not active: {other:?}"),
+    }
+
+    let changed = router.neighbor_down(preferred).unwrap();
+    assert_eq!(changed, vec![destination_prefix]);
+    assert_eq!(router.learned_routes()[0].learned_from, Some(alternate));
+    match router.process(0, packet(source, destination)).unwrap() {
+        RouterDisposition::Forward { egress_port, .. } => assert_eq!(egress_port, 1),
+        other => panic!("alternate learned route was not installed after failure: {other:?}"),
+    }
+
+    let changed = router.neighbor_down(alternate).unwrap();
+    assert_eq!(changed, vec![destination_prefix]);
+    assert!(router.learned_routes().is_empty());
+    assert_eq!(
+        router.process(0, packet(source, destination)).unwrap(),
+        RouterDisposition::Drop
+    );
+
+    router
+        .receive_advertisement(
+            preferred,
+            0,
+            RouteAdvertise {
+                advertiser: preferred,
+                prefix: destination_prefix,
+                origin: RouteOrigin::Learned,
+                metric: RouteMetric(100),
+            },
+        )
+        .unwrap();
+    match router.process(1, packet(source, destination)).unwrap() {
+        RouterDisposition::Forward { egress_port, .. } => assert_eq!(egress_port, 0),
+        other => panic!("restored preferred route was not reinstalled: {other:?}"),
+    }
+}
