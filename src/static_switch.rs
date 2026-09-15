@@ -2,8 +2,15 @@
 
 use alloc::collections::BTreeMap;
 
+use p4rs::{packet_in, Pipeline};
+
 use crate::error::Error;
-use crate::wire::gdp::{GdpAddress, GdpAddresses, GdpPacket};
+use crate::wire::gdp::{GdpAddress, GdpAddresses, GdpPacket, GdpWireConfig};
+
+p4_macro::use_p4!(
+    p4 = "p4-static-switch/p4/switch.p4",
+    pipeline_name = "gnet_static_switch",
+);
 
 pub type SwitchPortId = u16;
 pub const SWITCH_PORT_COUNT: u16 = 8;
@@ -17,18 +24,19 @@ pub enum SwitchDisposition {
     Drop,
 }
 
-/// Fixed eight-port GNet switch management model.
-///
-/// The first milestone deliberately keeps node registration explicit. The P4
-/// fast path added next will consume the same exact node-to-port table; GS3
-/// NODE_ANNOUNCE and DLP/GC3 lifecycle remain outside this object for now.
+/// Fixed eight-port GNet switch with a Rust management plane and the same
+/// x4c/P4 GDP parser/SoftNPU model used elsewhere in smolgnet. Node management
+/// programs an exact destination-address table; the P4 fast path performs the
+/// actual forwarding decision without changing the GDP packet.
 pub struct StaticP4Switch {
+    pipeline: main_pipeline,
     nodes: BTreeMap<GdpAddress, SwitchPortId>,
 }
 
 impl StaticP4Switch {
     pub fn new() -> Self {
         Self {
+            pipeline: main_pipeline::new(SWITCH_PORT_COUNT),
             nodes: BTreeMap::new(),
         }
     }
@@ -48,36 +56,63 @@ impl StaticP4Switch {
     ) -> crate::error::Result<Option<SwitchPortId>> {
         validate_port(port)?;
         validate_global_node(address)?;
-        Ok(self.nodes.insert(address, port))
+        let previous = self.nodes.insert(address, port);
+        self.rebuild_pipeline();
+        Ok(previous)
     }
 
     pub fn remove_node(&mut self, address: GdpAddress) -> Option<SwitchPortId> {
-        self.nodes.remove(&address)
+        let previous = self.nodes.remove(&address);
+        if previous.is_some() {
+            self.rebuild_pipeline();
+        }
+        previous
     }
 
     pub fn process(
-        &self,
+        &mut self,
         ingress_port: SwitchPortId,
         packet: GdpPacket,
     ) -> crate::error::Result<SwitchDisposition> {
         validate_port(ingress_port)?;
 
-        let destination = match packet.header.addresses {
-            GdpAddresses::Global { destination, .. } => destination,
-            GdpAddresses::Local { .. } => return Ok(SwitchDisposition::Drop),
+        let local_prefix = match &packet.header.addresses {
+            GdpAddresses::Global { .. } => 0,
+            GdpAddresses::Local { prefix, .. } => *prefix,
         };
+        let cfg = GdpWireConfig::default();
+        let bytes = packet.encode(cfg)?;
+        let mut input = packet_in::new(&bytes);
+        let outputs = self.pipeline.process_packet(ingress_port, &mut input);
 
-        let Some(egress_port) = self.node_port(destination) else {
+        if outputs.is_empty() {
             return Ok(SwitchDisposition::Drop);
-        };
-        if egress_port == ingress_port {
+        }
+        if outputs.len() != 1 {
+            return Err(Error::InvalidState);
+        }
+
+        let (out, port) = outputs.into_iter().next().unwrap();
+        let egress_port = port as SwitchPortId;
+        if egress_port >= SWITCH_PORT_COUNT || egress_port == ingress_port {
             return Ok(SwitchDisposition::Drop);
         }
 
+        let mut bytes = out.header_data;
+        bytes.extend_from_slice(out.payload_data);
+        let packet = GdpPacket::decode(&bytes, cfg, local_prefix)?;
         Ok(SwitchDisposition::Forward {
             egress_port,
             packet,
         })
+    }
+
+    fn rebuild_pipeline(&mut self) {
+        let mut pipeline = main_pipeline::new(SWITCH_PORT_COUNT);
+        for (&address, &port) in &self.nodes {
+            program_global_node(&mut pipeline, address, port);
+        }
+        self.pipeline = pipeline;
     }
 }
 
@@ -85,6 +120,20 @@ impl Default for StaticP4Switch {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn program_global_node(pipeline: &mut main_pipeline, address: GdpAddress, port: SwitchPortId) {
+    let hi = (address.0 >> 32) as u32;
+    let lo = address.0 as u32;
+    let mut key = hi.to_le_bytes().to_vec();
+    key.extend_from_slice(&lo.to_le_bytes());
+    pipeline.add_table_entry(
+        "ingress.global_nodes",
+        "forward",
+        &key,
+        &port.to_le_bytes(),
+        0,
+    );
 }
 
 fn validate_port(port: SwitchPortId) -> crate::error::Result<()> {
