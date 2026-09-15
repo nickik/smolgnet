@@ -20,6 +20,8 @@ pub mod dlp_gdp;
 #[cfg(feature = "alloc")]
 pub mod dlp_v01;
 #[cfg(feature = "alloc")]
+pub mod egress_scheduler;
+#[cfg(feature = "alloc")]
 pub mod endpoint;
 #[cfg(feature = "alloc")]
 pub mod gts;
@@ -77,6 +79,8 @@ pub use dlp_control::{
 pub use dlp_gdp::{DlpGdpPort, GdpPacketPort};
 #[cfg(feature = "alloc")]
 pub use dlp_v01::{DlpLink, DlpLinkState};
+#[cfg(feature = "alloc")]
+pub use egress_scheduler::{EgressFlowId, RouterEgressScheduler};
 #[cfg(feature = "alloc")]
 pub use endpoint::{
     make_link_local, AddressAuthorityConfig, AddressState, Endpoint, EndpointConfig,

@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use smolgnet::*;
 
 const LEFT_PREFIX: u64 = 0x3101_0000_0000_0000;
@@ -16,12 +14,6 @@ struct Peer {
     address: GdpAddress,
     port: u16,
     marker: u8,
-}
-
-#[derive(Clone, Debug)]
-struct RoutedFrame {
-    flow: usize,
-    packet: GdpPacket,
 }
 
 fn prefix(address: u64) -> GdpPrefix {
@@ -172,18 +164,6 @@ fn deliver_from_link(
     }
 }
 
-fn queue_three_flows(pending: &mut VecDeque<RoutedFrame>, link: &mut DlpLink) -> Vec<usize> {
-    let mut flows = Vec::new();
-    for _ in 0..3 {
-        let Some(frame) = pending.pop_front() else {
-            break;
-        };
-        flows.push(frame.flow);
-        link.queue_data_packet(&frame.packet).unwrap();
-    }
-    flows
-}
-
 fn transmit_batch(
     sender: &mut DlpLink,
     receiver: &mut DlpLink,
@@ -197,7 +177,7 @@ fn transmit_batch(
         let frame = sender
             .poll_tx_frame()
             .unwrap()
-            .expect("queued routed frame must be sendable");
+            .expect("scheduled routed frame must be sendable");
         assert_eq!(frame.traffic, LinkTraffic::Data);
         assert_eq!(frame.vcid, expected_vc);
         let flit_len = frame.flit_len();
@@ -232,52 +212,63 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
     assert_eq!(left_dlp.endpoint().vc_mode(), VcMode::Four);
     assert_eq!(right_dlp.endpoint().vc_mode(), VcMode::Four);
 
-    // All sixteen endpoints become ready at once: eight left->right counterpart
-    // flows and eight right->left counterpart flows. The router-link scheduler
-    // admits at most three flows per direction at once because VC4 exposes
-    // exactly three data VCIDs.
-    let mut left_to_right: VecDeque<RoutedFrame> = (0..PEERS)
-        .map(|flow| RoutedFrame {
-            flow,
-            packet: route_to_link(
-                &mut left_switch,
-                &mut left_router,
-                left[flow],
-                packet(left[flow], right[flow], flow, 0),
-                0,
-                1,
-            ),
-        })
-        .collect();
-    let mut right_to_left: VecDeque<RoutedFrame> = (0..PEERS)
-        .map(|flow| RoutedFrame {
-            flow,
-            packet: route_to_link(
-                &mut right_switch,
-                &mut right_router,
-                right[flow],
-                packet(right[flow], left[flow], flow, 1),
-                1,
-                0,
-            ),
-        })
-        .collect();
+    // All sixteen endpoints become ready at once. The production egress
+    // scheduler, rather than an integration-test admission helper, performs
+    // fair flow admission into the three ordinary VC4 data channels.
+    let mut left_scheduler = RouterEgressScheduler::new();
+    let mut right_scheduler = RouterEgressScheduler::new();
+    for flow in 0..PEERS {
+        let routed = route_to_link(
+            &mut left_switch,
+            &mut left_router,
+            left[flow],
+            packet(left[flow], right[flow], flow, 0),
+            0,
+            1,
+        );
+        left_scheduler.enqueue(
+            EgressFlowId::new(left[flow].address, right[flow].address, flow as u64),
+            routed,
+        );
+
+        let routed = route_to_link(
+            &mut right_switch,
+            &mut right_router,
+            right[flow],
+            packet(right[flow], left[flow], flow, 1),
+            1,
+            0,
+        );
+        right_scheduler.enqueue(
+            EgressFlowId::new(right[flow].address, left[flow].address, flow as u64),
+            routed,
+        );
+    }
+
+    assert_eq!(left_scheduler.queued_packets(), PEERS);
+    assert_eq!(right_scheduler.queued_packets(), PEERS);
 
     let mut l2r_vc_history = Vec::new();
     let mut r2l_vc_history = Vec::new();
     let mut l2r_delivered = [false; PEERS];
     let mut r2l_delivered = [false; PEERS];
+    let mut next_l2r_flow = 0;
+    let mut next_r2l_flow = 0;
 
-    while !left_to_right.is_empty() || !right_to_left.is_empty() {
-        let l2r_flows = queue_three_flows(&mut left_to_right, &mut left_dlp);
-        let r2l_flows = queue_three_flows(&mut right_to_left, &mut right_dlp);
+    while left_scheduler.queued_packets() != 0 || right_scheduler.queued_packets() != 0 {
+        let l2r_count = left_scheduler.schedule_round(&mut left_dlp).unwrap();
+        let r2l_count = right_scheduler.schedule_round(&mut right_dlp).unwrap();
 
-        let l2r_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..l2r_flows.len()].to_vec();
-        let r2l_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..r2l_flows.len()].to_vec();
+        let l2r_flows: Vec<usize> = (next_l2r_flow..next_l2r_flow + l2r_count).collect();
+        let r2l_flows: Vec<usize> = (next_r2l_flow..next_r2l_flow + r2l_count).collect();
+        next_l2r_flow += l2r_count;
+        next_r2l_flow += r2l_count;
 
-        // Full-duplex link: advance one complete GDP frame in each direction
-        // alternately. A VCID is therefore owned for exactly one packet quantum
-        // and is available to another flow in the next scheduler round.
+        let l2r_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..l2r_count].to_vec();
+        let r2l_expected = [Vcid::VC1, Vcid::VC2, Vcid::VC3][..r2l_count].to_vec();
+
+        // Full-duplex link: each scheduler round presents at most one packet
+        // per selected flow. DLP alone assigns/recycles the numeric VCIDs.
         let l2r = transmit_batch(&mut left_dlp, &mut right_dlp, &l2r_flows, &l2r_expected);
         let r2l = transmit_batch(&mut right_dlp, &mut left_dlp, &r2l_flows, &r2l_expected);
 
@@ -326,6 +317,8 @@ fn eight_counterpart_flows_reuse_vc1_to_vc3_one_packet_at_a_time() {
     assert_eq!(r2l_vc_history, expected);
     assert_eq!(l2r_delivered, [true; PEERS]);
     assert_eq!(r2l_delivered, [true; PEERS]);
+    assert_eq!(left_scheduler.queued_packets(), 0);
+    assert_eq!(right_scheduler.queued_packets(), 0);
     assert_eq!(left_dlp.endpoint().queued_data_flits(), 0);
     assert_eq!(right_dlp.endpoint().queued_data_flits(), 0);
 }
