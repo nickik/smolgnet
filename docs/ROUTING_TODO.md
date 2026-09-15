@@ -18,7 +18,7 @@ longest-prefix match
 next-hop GDP router
 ```
 
-No multi-interface forwarding engine is required here.
+No production multi-interface forwarding engine is required here.
 
 ## 1. GDP prefix type
 
@@ -108,8 +108,6 @@ Do not add administrative distance, route origin, metrics, ECMP, policy routing,
 
 ### Direct versus routed rule
 
-Keep the rule deliberately simple and avoid inventing interface/connected-route semantics:
-
 ```text
 route table empty
     -> legacy point-to-point mode
@@ -146,22 +144,36 @@ No separate routing timer subsystem is introduced.
 
 ## 9. Higher-level routed tests
 
-The minimal endpoint routing milestone does not require a production forwarding implementation inside `smolgnet`.
+These remain test-only and deliberately do not introduce a production router object into `smolgnet`.
 
-Deferred until a separate forwarding component exists:
+- [x] Add deterministic routed-topology harness using native `GnetFrame` GDP frames.
+- [x] Two-hop topology: `Host A -> R1 -> R2 -> Host B`.
+- [x] Real GTS connect/request/reply across two GDP forwarders.
+- [x] Longest-prefix route selection.
+- [x] Default-route fallback.
+- [x] Hop-Limit exhaustion.
+- [x] No-route drop.
+- [x] Route-expiry fallback to an alternate/default path.
+- [x] Diamond topology failover: `R1-R2-R4` to `R1-R3-R4`.
+- [x] Verify source/destination identities survive multiple forwarding hops.
+- [x] Verify Hop Limit decrements once per router.
+- [x] Drop one routed reliable GTS frame and verify retransmission succeeds after RTO.
+- [x] Verify Local GDP ingress can be converted to Global GDP egress without changing canonical identities.
+- [x] Keep the forwarding helpers under `tests/`; they are not production router code.
 
-- [ ] Two endpoints with a simple forwarding test helper between them.
-- [ ] Verify a complete GDP packet traverses that helper while preserving destination identity.
-- [ ] Verify a GTS request/response traverses the helper unchanged.
+Repeatable test files:
 
-These belong with the future router/forwarding implementation, not in the endpoint route-table core.
+```text
+tests/routed_topology.rs
+tests/routed_topology_stress.rs
+```
 
 ## Explicitly deferred / out of scope
 
-- multi-interface router object;
-- interface handles in the route table;
+- production multi-interface router object;
+- interface handles in the endpoint route table;
 - connected-route management;
-- packet forwarding between interfaces;
+- production packet forwarding between interfaces;
 - route origin metadata;
 - administrative preference;
 - route metrics;
@@ -184,7 +196,7 @@ These belong with the future router/forwarding implementation, not in the endpoi
 
 ## Current status
 
-The minimal smoltcp-like routing milestone is complete in `smolgnet`:
+The minimal smoltcp-like routing milestone and deterministic routed integration tests are complete in `smolgnet`:
 
 ```text
 GdpPrefix
@@ -197,6 +209,7 @@ Endpoint::route()
 Endpoint::next_hop()
 Endpoint::{connect_at,send_gctl_at,send_echo_at}
 route-expiry poll_at integration
+routed topology + failover + loss tests
 ```
 
 Further routing work should happen in a dedicated forwarding/router component unless a concrete endpoint use case requires another small compatibility hook.
