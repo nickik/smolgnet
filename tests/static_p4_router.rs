@@ -221,14 +221,16 @@ fn local_form_is_never_transit_routed() {
 }
 
 #[test]
-fn hop_one_same_port_hairpin_and_invalid_ingress_are_rejected() {
+fn expired_hops_same_port_hairpin_and_invalid_ingress_are_rejected() {
     let mut router = router();
-    assert_eq!(
-        router
-            .process(0, packet(0x1200_0000_0000_0042, 0x9900_0000_0000_0001, 1))
-            .unwrap(),
-        RouterDisposition::Drop
-    );
+    for hop in [0, 1] {
+        assert_eq!(
+            router
+                .process(0, packet(0x1200_0000_0000_0042, 0x9900_0000_0000_0001, hop))
+                .unwrap(),
+            RouterDisposition::Drop
+        );
+    }
     assert_eq!(
         router
             .process(1, packet(0x3300_0000_0000_0001, 0x9900_0000_0000_0001, 8))
@@ -297,10 +299,18 @@ fn static_route_validation_rejects_invalid_ports_duplicates_and_next_hops() {
 }
 
 #[test]
-fn static_64_routes_cannot_capture_router_or_bootstrap_addresses() {
-    for destination in [ROUTER_BOOTSTRAP_ADDRESS, GdpAddress(0xfe80_0000_0000_0001)] {
+fn static_64_routes_cannot_capture_any_router_owned_or_bootstrap_address() {
+    let connected_prefix = prefix(0x1200_0000_0000_0000, 16);
+    let routed_address = GdpAddress(0x1200_0000_0000_0001);
+
+    for destination in [
+        ROUTER_BOOTSTRAP_ADDRESS,
+        GdpAddress(0xfe80_0000_0000_0001),
+        routed_address,
+    ] {
+        let p0 = port(0).with_connected_network(connected_prefix, routed_address);
         let config = RouterStartupConfig::new(
-            vec![port(0), port(1)],
+            vec![p0, port(1)],
             vec![StaticRouteConfig::direct(prefix(destination.0, 64), 1)],
         );
         assert_eq!(config.validate(), Err(Error::InvalidField));
