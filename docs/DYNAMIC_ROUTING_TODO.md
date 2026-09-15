@@ -36,7 +36,7 @@ Completion gate:
 - [x] Allow a later valid HELLO/ACK to bring an expired neighbor back `UP`.
 - [x] Reject zero hold time and self-RouterId HELLO/ACK messages.
 - [x] Two-router test proves A discovers B and B discovers A without preconstructed neighbor state.
-- [x] Keep `ROUTE_ADVERTISE` unprocessed until Stage 3.
+- [x] Keep route messages separate from the adjacency state machine.
 
 Completion gate:
 
@@ -48,48 +48,55 @@ Completion gate:
 
 ## Stage 3 — Forward route exchange + RIB/FIB
 
-- [ ] Router advertises connected routes with `ROUTE_ADVERTISE`.
-- [ ] Router forwards learned routes to other neighbors.
-- [ ] Add local link metric when forwarding a learned route.
-- [ ] Apply split horizon: never advertise a learned route back to the neighbor it came from.
-- [ ] Store `learned_from: RouterId` for learned routes.
-- [ ] Prefer lower metric among equivalent learned routes.
-- [ ] Tie-break equal learned metrics deterministically by RouterId.
-- [ ] Add a RIB that can hold connected, learned, and static alternatives.
-- [ ] Generate a selected FIB from the RIB.
-- [ ] Install FIB changes into the P4 forwarding table.
-- [ ] Keep static routes available as overrides/fallbacks.
-- [ ] Reserve `Escape` but do not implement escape routing yet.
-- [ ] Remove manually configured cross-router routes from `router_to_router_simulation.rs`.
+- [x] Router advertises connected routes with `ROUTE_ADVERTISE`.
+- [x] Router forwards learned routes to other neighbors.
+- [x] Add local link metric when forwarding a learned route.
+- [x] Apply split horizon: never advertise a learned route back to the neighbor it came from.
+- [x] Store `learned_from: RouterId` for learned routes.
+- [x] Prefer lower metric among equivalent learned routes.
+- [x] Tie-break equal learned metrics deterministically by RouterId.
+- [x] Add a RIB that can hold connected, learned, and static alternatives.
+- [x] Generate a selected FIB from the RIB.
+- [x] Install learned selected routes into the P4 forwarding table through `DynamicP4Router`.
+- [x] Keep static routes available as overrides/fallbacks.
+- [x] Reserve `Escape` but do not implement escape routing yet.
+- [x] Remove manually configured cross-router routes from `router_to_router_simulation.rs`.
 
 Completion gate:
 
-- [ ] Existing router-to-router simulation passes using learned cross-router routes.
-- [ ] No topology database or Dijkstra is required.
-- [ ] RouterEgressScheduler and DLP VC assignment remain unchanged.
+- [x] Existing router-to-router simulation passes using learned cross-router routes.
+- [x] No topology database or Dijkstra is required.
+- [x] RouterEgressScheduler and DLP VC assignment remain unchanged.
 
 ## Stage 4 — Failure + reconvergence
 
-- [ ] Define a simple `ROUTE_WITHDRAW` wire message before implementing failure handling.
-- [ ] Build a topology with two possible paths.
-- [ ] Fail one router-to-router link.
-- [ ] Neighbor hold timeout marks the adjacency down.
-- [ ] Remove routes learned through that neighbor.
-- [ ] Propagate withdrawal.
-- [ ] Re-select RIB/FIB using the alternate learned route.
-- [ ] Prove traffic succeeds over the alternate path.
-- [ ] Restore the link and prove deterministic convergence again.
+- [x] Define `ROUTE_WITHDRAW = 0x43` with an exact 32-byte wire format and reserved-byte validation.
+- [x] Keep competing learned candidates so an alternate path can already exist before failure.
+- [x] Support explicit neighbor/link-down route removal.
+- [x] Connect Stage 2 hold-time expiry directly to learned-route removal and P4 FIB rebuild.
+- [x] Remove only routes learned through the failed/withdrawing neighbor.
+- [x] Keep withdrawals neighbor-scoped and idempotent.
+- [x] Generate triggered `ROUTE_ADVERTISE` or `ROUTE_WITHDRAW` updates for changed prefixes.
+- [x] Re-select RIB/FIB using the retained alternate learned route.
+- [x] Rebuild the P4 forwarding table before subsequent traffic.
+- [x] Prove stale forwarding disappears completely when no alternate remains.
+- [x] Build an A-B/C-D two-path test and prove preferred-path traffic before failure.
+- [x] Withdraw B's path and prove A reconverges through C end-to-end to D.
+- [x] Restore B's path and prove deterministic convergence back to the lower-cost route.
 
 Completion gate:
 
-- [ ] `neighbor down -> route removal -> withdrawal -> RIB/FIB replacement -> traffic restored` is covered end-to-end.
-- [ ] No stale next hop remains usable after withdrawal.
+- [x] `neighbor down -> route removal -> withdrawal -> RIB/FIB replacement -> traffic restored` is covered end-to-end.
+- [x] A real adjacency hold timeout causes the same route/FIB transition.
+- [x] No stale next hop remains usable after withdrawal; with no alternate the P4 router drops the destination.
+- [x] GCTL routing/wire tests and Stable Network Simulation pass on the verified Stage 4 code head.
 
 ## Explicitly deferred
 
 - Link-state topology database.
 - SPF/Dijkstra.
 - ECMP and unequal-cost multipath.
+- Hold-down timers, route poisoning, and poisoned reverse.
 - Congestion-aware/adaptive routing.
 - Up*/down* or other deadlock-free escape topology construction.
 - VC0 escape forwarding policy beyond reserving the route class/data-model hooks.
