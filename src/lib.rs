@@ -82,9 +82,8 @@ pub use endpoint::{
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
 #[cfg(feature = "p4-router")]
 pub use static_router::{
-    FibEntry, FibOrigin, NodeState, ROUTER_BOOTSTRAP_ADDRESS, RouterAttachment,
-    RouterDisposition, RouterNodeRecord, RouterPortConfig, RouterPortId, RouterPortState,
-    RouterStartupConfig, StaticP4Router, StaticRouteConfig, SwitchRegistrationState,
+    FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
+    RouterPortConfig, RouterPortId, RouterStartupConfig, StaticP4Router, StaticRouteConfig,
 };
 #[cfg(feature = "alloc")]
 pub use qdx::{GnetFlitDevice, GnetFrameDevice};
