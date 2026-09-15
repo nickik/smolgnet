@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use smolgnet::*;
 
@@ -11,11 +11,15 @@ struct Resource {
     vcid: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Flow {
     id: usize,
-    held: Resource,
+    held: Vec<Resource>,
     wants: Resource,
+}
+
+fn resource(link: usize, vcid: u8) -> Resource {
+    Resource { link, vcid }
 }
 
 fn node_network(index: usize) -> GdpAddress {
@@ -51,7 +55,7 @@ fn packet(flow: usize) -> GdpPacket {
 }
 
 /// Verify that each synthetic flow really requires the two consecutive ring
-/// links represented by the resource model below.
+/// links represented by the basic resource model below.
 fn verify_two_hop_routes(routers: &mut [CycleAwareRouter; ROUTERS]) {
     for flow in 0..ROUTERS {
         let next = (flow + 1) % ROUTERS;
@@ -91,27 +95,112 @@ fn verify_two_hop_routes(routers: &mut [CycleAwareRouter; ROUTERS]) {
     }
 }
 
-fn make_cycle(vcid: u8) -> [Flow; ROUTERS] {
-    std::array::from_fn(|flow| Flow {
-        id: flow,
-        held: Resource { link: flow, vcid },
-        wants: Resource {
-            link: (flow + 1) % ROUTERS,
-            vcid,
-        },
-    })
+fn make_cycle(vcid: u8) -> Vec<Flow> {
+    (0..ROUTERS)
+        .map(|flow| Flow {
+            id: flow,
+            held: vec![resource(flow, vcid)],
+            wants: resource((flow + 1) % ROUTERS, vcid),
+        })
+        .collect()
 }
 
-fn held_resources(flows: &[Flow; ROUTERS]) -> BTreeMap<Resource, usize> {
-    flows.iter().map(|flow| (flow.held, flow.id)).collect()
+fn held_resources(flows: &[Flow]) -> BTreeMap<Resource, usize> {
+    let mut held = BTreeMap::new();
+    for flow in flows {
+        for held_resource in &flow.held {
+            assert!(held.insert(*held_resource, flow.id).is_none());
+        }
+    }
+    held
 }
 
-fn is_closed_wait_cycle(flows: &[Flow; ROUTERS]) -> bool {
+/// Build the actual wait-for graph for the current wormhole state and return
+/// every closed flow cycle. A flow has one outgoing wait edge only when its
+/// requested resource is currently held by another blocked flow.
+///
+/// This is deliberately stronger than merely finding a possible cycle in the
+/// static route/channel-dependency graph: it proves that the resources needed
+/// to close the cycle are simultaneously occupied in this simulated state.
+fn detect_wait_cycles(flows: &[Flow]) -> Vec<Vec<usize>> {
     let held = held_resources(flows);
-    flows.iter().all(|flow| {
-        held.get(&flow.wants)
-            .is_some_and(|holder| *holder != flow.id)
-    })
+    let waits_for: BTreeMap<usize, usize> = flows
+        .iter()
+        .filter_map(|flow| {
+            held.get(&flow.wants)
+                .copied()
+                .filter(|holder| *holder != flow.id)
+                .map(|holder| (flow.id, holder))
+        })
+        .collect();
+
+    let mut cycles = Vec::new();
+    let mut globally_seen = BTreeSet::new();
+
+    for start in waits_for.keys().copied() {
+        if globally_seen.contains(&start) {
+            continue;
+        }
+
+        let mut path = Vec::new();
+        let mut index = BTreeMap::new();
+        let mut current = start;
+
+        loop {
+            if let Some(cycle_start) = index.get(&current).copied() {
+                cycles.push(path[cycle_start..].to_vec());
+                globally_seen.extend(path);
+                break;
+            }
+            if globally_seen.contains(&current) {
+                globally_seen.extend(path);
+                break;
+            }
+
+            index.insert(current, path.len());
+            path.push(current);
+
+            let Some(next) = waits_for.get(&current).copied() else {
+                globally_seen.extend(path);
+                break;
+            };
+            current = next;
+        }
+    }
+
+    cycles.sort();
+    cycles
+}
+
+fn assert_closed_wait_cycle(flows: &[Flow], expected: &[usize]) {
+    let cycles = detect_wait_cycles(flows);
+    assert_eq!(cycles.len(), 1, "expected exactly one wait cycle: {cycles:?}");
+    assert_eq!(cycles[0].len(), expected.len());
+    assert_eq!(
+        cycles[0].iter().copied().collect::<BTreeSet<_>>(),
+        expected.iter().copied().collect::<BTreeSet<_>>()
+    );
+}
+
+/// Escape paths use VC0 exclusively and a monotonically increasing escape
+/// rank. Strict rank increase is the test's compact representation of an
+/// acyclic deterministic escape routing function (for example a topology-
+/// derived up*/down* or spanning-tree discipline).
+fn assert_acyclic_escape_paths(paths: &[Vec<(usize, usize)>]) {
+    for path in paths {
+        let mut previous_rank = None;
+        for (link, rank) in path {
+            let escape = resource(*link, 0);
+            assert_eq!(escape.vcid, 0);
+            if let Some(previous) = previous_rank {
+                assert!(
+                    previous < *rank,
+                    "escape rank must increase: {previous} !< {rank} on link {link}"
+                );
+            }
+            previous_rank = Some(*rank);
+        }
+    }
 }
 
 #[test]
@@ -126,17 +215,8 @@ fn vc0_used_as_normal_data_allows_four_router_cycle_to_deadlock() {
         assert_eq!(router.escape_vcid(), None);
     }
 
-    // Four worms have each acquired their first clockwise link on VC0. Each
-    // now waits for the next VC0 resource, which is held by the next worm.
-    // No head flit can advance and none can release its tail: a closed wait
-    // cycle exists across all four links.
     let flows = make_cycle(0);
-    assert!(is_closed_wait_cycle(&flows));
-
-    let held = held_resources(&flows);
-    for flow in flows {
-        assert!(held.contains_key(&flow.wants));
-    }
+    assert_closed_wait_cycle(&flows, &[0, 1, 2, 3]);
 }
 
 #[test]
@@ -151,24 +231,166 @@ fn vc0_reserved_for_escape_breaks_the_same_cycle() {
         assert_eq!(router.escape_vcid(), Some(0));
     }
 
-    // The same four worms can form a dependency cycle on an ordinary VC.
     let flows = make_cycle(1);
-    assert!(is_closed_wait_cycle(&flows));
+    assert_closed_wait_cycle(&flows, &[0, 1, 2, 3]);
     let held = held_resources(&flows);
 
-    // But VC0 was never consumed by ordinary traffic. Every blocked worm has
-    // a distinct next-link VC0 escape resource available. In this deliberately
-    // minimal two-hop test, entering that escape VC is the final hop, so there
-    // is no VC0 -> VC0 dependency and the escape subnetwork is acyclic.
-    let mut escape_owners = BTreeMap::new();
-    for flow in flows {
-        let escape = Resource {
-            link: flow.wants.link,
-            vcid: routers[flow.id].escape_vcid().unwrap(),
-        };
+    for flow in &flows {
+        let escape = resource(flow.wants.link, 0);
         assert!(!held.contains_key(&escape));
-        assert!(escape_owners.insert(escape, flow.id).is_none());
     }
 
-    assert_eq!(escape_owners.len(), ROUTERS);
+    // In this minimal case escape is the final hop, so there is no VC0->VC0
+    // dependency at all.
+    assert_acyclic_escape_paths(&[
+        vec![(1, 10)],
+        vec![(2, 20)],
+        vec![(3, 30)],
+        vec![(0, 40)],
+    ]);
+}
+
+#[test]
+fn multi_hop_wraparound_cycle_is_detected_and_escape_route_breaks_it() {
+    // Each worm already spans two physical links. Its head then requests a
+    // third resource. Flow 2's request wraps from link 5 back to link 0, which
+    // closes the dependency after the packets have occupied multiple hops:
+    //
+    // F0: holds L0,L1 -> wants L2
+    // F1: holds L2,L3 -> wants L4
+    // F2: holds L4,L5 -> wants L0
+    let flows = vec![
+        Flow {
+            id: 0,
+            held: vec![resource(0, 1), resource(1, 1)],
+            wants: resource(2, 1),
+        },
+        Flow {
+            id: 1,
+            held: vec![resource(2, 1), resource(3, 1)],
+            wants: resource(4, 1),
+        },
+        Flow {
+            id: 2,
+            held: vec![resource(4, 1), resource(5, 1)],
+            wants: resource(0, 1),
+        },
+    ];
+
+    assert_closed_wait_cycle(&flows, &[0, 1, 2]);
+
+    let held = held_resources(&flows);
+    for flow in &flows {
+        assert!(!held.contains_key(&resource(flow.wants.link, 0)));
+    }
+
+    // Escape routing does NOT simply repeat the cyclic ring route on VC0.
+    // These synthetic links model a deterministic escape tree/subnetwork.
+    // Every path moves only toward larger escape ranks, so no VC0 path can
+    // return to an earlier escape resource and close a cycle.
+    let escape_paths = vec![
+        vec![(100, 10), (101, 20), (102, 30)],
+        vec![(103, 15), (101, 20), (102, 30)],
+        vec![(104, 5), (100, 10), (101, 20)],
+    ];
+    assert_acyclic_escape_paths(&escape_paths);
+}
+
+#[test]
+fn mixed_vc_multi_hop_cycle_still_needs_the_vc0_escape_class() {
+    // A dependency cycle is not required to stay on a single normal VC class.
+    // Legal VC transitions can create a cycle across VC1/VC2/VC3 as well.
+    let flows = vec![
+        Flow {
+            id: 0,
+            held: vec![resource(0, 1), resource(1, 2)],
+            wants: resource(2, 3),
+        },
+        Flow {
+            id: 1,
+            held: vec![resource(2, 3), resource(3, 1)],
+            wants: resource(4, 2),
+        },
+        Flow {
+            id: 2,
+            held: vec![resource(4, 2), resource(5, 3)],
+            wants: resource(0, 1),
+        },
+    ];
+
+    assert_closed_wait_cycle(&flows, &[0, 1, 2]);
+
+    let held = held_resources(&flows);
+    for flow in &flows {
+        assert!(!held.contains_key(&resource(flow.wants.link, 0)));
+    }
+
+    assert_acyclic_escape_paths(&[
+        vec![(200, 1), (201, 2), (202, 3), (203, 4)],
+        vec![(204, 1), (205, 2), (203, 4)],
+        vec![(206, 1), (201, 2), (202, 3)],
+    ]);
+}
+
+#[test]
+fn detector_finds_multiple_deadlocked_components_without_calling_blocked_tail_deadlocked() {
+    // Two independent cycles plus one flow that is merely queued behind one of
+    // them. The extra flow is blocked, but it is not itself part of a circular
+    // wait. This is why "no progress for N cycles" is not a proof of deadlock.
+    let flows = vec![
+        Flow {
+            id: 0,
+            held: vec![resource(0, 1)],
+            wants: resource(1, 1),
+        },
+        Flow {
+            id: 1,
+            held: vec![resource(1, 1)],
+            wants: resource(2, 1),
+        },
+        Flow {
+            id: 2,
+            held: vec![resource(2, 1)],
+            wants: resource(0, 1),
+        },
+        Flow {
+            id: 3,
+            held: vec![resource(3, 2)],
+            wants: resource(4, 2),
+        },
+        Flow {
+            id: 4,
+            held: vec![resource(4, 2)],
+            wants: resource(3, 2),
+        },
+        Flow {
+            id: 5,
+            held: vec![resource(5, 3)],
+            wants: resource(1, 1),
+        },
+    ];
+
+    let cycles = detect_wait_cycles(&flows);
+    assert_eq!(cycles.len(), 2);
+    let members: Vec<BTreeSet<usize>> = cycles
+        .iter()
+        .map(|cycle| cycle.iter().copied().collect())
+        .collect();
+    assert!(members.contains(&BTreeSet::from([0, 1, 2])));
+    assert!(members.contains(&BTreeSet::from([3, 4])));
+    assert!(members.iter().all(|cycle| !cycle.contains(&5)));
+
+    let held = held_resources(&flows);
+    for flow in &flows {
+        assert!(!held.contains_key(&resource(flow.wants.link, 0)));
+    }
+
+    assert_acyclic_escape_paths(&[
+        vec![(300, 1), (301, 2)],
+        vec![(302, 1), (301, 2)],
+        vec![(303, 1), (304, 2)],
+        vec![(305, 1), (306, 2)],
+        vec![(307, 1), (306, 2)],
+        vec![(308, 1), (301, 2)],
+    ]);
 }
