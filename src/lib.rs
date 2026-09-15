@@ -95,7 +95,7 @@ pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
 #[cfg(feature = "alloc")]
 pub use router_adjacency::{NeighborState, RouterAdjacency, RouterNeighbor};
 #[cfg(feature = "alloc")]
-pub use router_rib::{RibRoute, RouterRib, RoutingPortId, SelectedRoute};
+pub use router_rib::{RibRoute, RouteUpdate, RouterRib, RoutingPortId, SelectedRoute};
 #[cfg(feature = "p4-router")]
 pub use static_router::{
     FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
@@ -124,8 +124,8 @@ pub use wire::gctl::{
 };
 #[cfg(feature = "alloc")]
 pub use wire::gctl_routing::{
-    RouteAdvertise, RouterHello, RoutingGctlBody, RoutingGctlMessage, GCTL_ROUTE_ADVERTISE,
-    GCTL_ROUTER_HELLO, GCTL_ROUTER_HELLO_ACK,
+    RouteAdvertise, RouteWithdraw, RouterHello, RoutingGctlBody, RoutingGctlMessage,
+    GCTL_ROUTE_ADVERTISE, GCTL_ROUTE_WITHDRAW, GCTL_ROUTER_HELLO, GCTL_ROUTER_HELLO_ACK,
 };
 #[cfg(feature = "alloc")]
 pub use wire::gdp::GdpPacket;
