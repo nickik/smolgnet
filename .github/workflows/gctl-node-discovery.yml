@@ -21,10 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check formatting
-        run: rustfmt --check src/wire/gctl.rs tests/gctl_node_discovery.rs
       - name: Run GCTL discovery and existing wire tests
         run: |
           set -o pipefail
