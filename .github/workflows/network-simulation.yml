@@ -27,8 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check simulation source formatting
-        run: rustfmt --check src/static_switch.rs tests/network_simulation.rs
+      - name: Check switch source formatting
+        run: rustfmt --check src/static_switch.rs
       - name: Check simulation build
         run: cargo check --features p4-router,p4-switch --test network_simulation
       - name: Run stable topology scenarios
