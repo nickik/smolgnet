@@ -284,6 +284,7 @@ mod tests {
     #[test]
     fn expired_routes_are_ignored() {
         let prefix = GdpPrefix::new(addr(0xaaaa_0000_0000_0000), 16).unwrap();
+        let destination = addr(0xaaaa_1234_0000_0000);
         let mut routes: RouteTable<2> = RouteTable::new();
 
         let mut route = Route::new(prefix, addr(10));
@@ -292,11 +293,11 @@ mod tests {
         routes.add_default_route(addr(20)).unwrap();
 
         assert_eq!(
-            routes.lookup(addr(0xaaaa_1234), Instant::from_millis(5)),
+            routes.lookup(destination, Instant::from_millis(5)),
             Some(addr(10))
         );
         assert_eq!(
-            routes.lookup(addr(0xaaaa_1234), Instant::from_millis(11)),
+            routes.lookup(destination, Instant::from_millis(11)),
             Some(addr(20))
         );
     }

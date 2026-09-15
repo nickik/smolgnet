@@ -1,4 +1,4 @@
-use core::ops::{Deref, DerefMut};
+use ::core::ops::{Deref, DerefMut};
 
 use crate::error::{Error, Result};
 use crate::routing::RouteTable;
