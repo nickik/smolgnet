@@ -1,11 +1,11 @@
 #![cfg(feature = "p4-router")]
 
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use p4rs::{packet_in, Pipeline};
 
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::routing::GdpPrefix;
 use crate::wire::gdp::{GdpAddress, GdpAddresses, GdpPacket, GdpWireConfig};
 
@@ -15,57 +15,21 @@ p4_macro::use_p4!(
 );
 
 pub type RouterPortId = u16;
-
-/// Reserved link-scoped destination used by an unconfigured host for its first
-/// `SOLICIT(Router)` exchange. It is always punted to Rust management and is
-/// never transit-routed.
+pub const ROUTER_PORT_COUNT: u16 = 2;
 pub const ROUTER_BOOTSTRAP_ADDRESS: GdpAddress = GdpAddress(0xfe80_0000_0000_0000);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouterAttachment {
-    Direct,
-    Coupler,
-    Switch,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwitchRegistrationState {
-    NotRequired,
-    Unregistered,
-    Registering,
-    Registered,
-    Rejected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeState {
-    Observed,
-    Offered,
-    Configured,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RouterNodeRecord {
-    pub link_local: GdpAddress,
-    pub routed_address: Option<GdpAddress>,
-    pub ingress_port: RouterPortId,
-    pub state: NodeState,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouterPortConfig {
     pub id: RouterPortId,
-    pub attachment: RouterAttachment,
     pub link_local: GdpAddress,
     pub connected_prefix: Option<GdpPrefix>,
     pub routed_address: Option<GdpAddress>,
 }
 
 impl RouterPortConfig {
-    pub fn new(id: RouterPortId, attachment: RouterAttachment, link_local: GdpAddress) -> Self {
+    pub const fn new(id: RouterPortId, link_local: GdpAddress) -> Self {
         Self {
             id,
-            attachment,
             link_local,
             connected_prefix: None,
             routed_address: None,
@@ -87,7 +51,8 @@ impl RouterPortConfig {
 pub struct StaticRouteConfig {
     pub prefix: GdpPrefix,
     pub egress_port: RouterPortId,
-    /// Management/adjacency metadata only. GDP destination is never rewritten.
+    /// Optional link-local adjacency. It selects the local next hop only; the
+    /// GDP destination remains the final destination and is never rewritten.
     pub next_hop: Option<GdpAddress>,
 }
 
@@ -124,31 +89,29 @@ impl RouterStartupConfig {
         Self { ports, routes }
     }
 
-    pub fn validate(&self) -> Result<()> {
-        if self.ports.is_empty() || self.ports.len() >= u16::MAX as usize {
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if self.ports.len() != ROUTER_PORT_COUNT as usize {
             return Err(Error::InvalidField);
         }
 
-        let mut seen_ports = BTreeSet::new();
         let mut owned_addresses = BTreeSet::new();
         let mut forwarding_prefixes = BTreeSet::new();
 
         for (index, port) in self.ports.iter().enumerate() {
-            if port.id as usize != index || !seen_ports.insert(port.id) {
+            if port.id as usize != index {
                 return Err(Error::InvalidField);
             }
-            if !is_link_local(port.link_local) || port.link_local == ROUTER_BOOTSTRAP_ADDRESS {
-                return Err(Error::InvalidField);
-            }
-            if !owned_addresses.insert(port.link_local) {
+            if !is_link_local(port.link_local)
+                || port.link_local == ROUTER_BOOTSTRAP_ADDRESS
+                || !owned_addresses.insert(port.link_local)
+            {
                 return Err(Error::InvalidField);
             }
 
             match (port.connected_prefix, port.routed_address) {
                 (None, None) => {}
                 (Some(prefix), Some(address)) => {
-                    if !is_address_authority_prefix(prefix)
-                        || is_link_local(prefix.network())
+                    if is_link_local(prefix.network())
                         || !prefix.contains(address)
                         || is_link_local(address)
                         || !owned_addresses.insert(address)
@@ -162,11 +125,16 @@ impl RouterStartupConfig {
         }
 
         for route in &self.routes {
-            if route.egress_port as usize >= self.ports.len() {
+            if route.egress_port >= ROUTER_PORT_COUNT || !forwarding_prefixes.insert(route.prefix) {
                 return Err(Error::InvalidField);
             }
-            if !forwarding_prefixes.insert(route.prefix) {
-                return Err(Error::InvalidField);
+            if let Some(next_hop) = route.next_hop {
+                if !is_link_local(next_hop)
+                    || next_hop == ROUTER_BOOTSTRAP_ADDRESS
+                    || owned_addresses.contains(&next_hop)
+                {
+                    return Err(Error::InvalidField);
+                }
             }
             if route.prefix.prefix_len() == 64 {
                 let destination = route.prefix.network();
@@ -178,13 +146,6 @@ impl RouterStartupConfig {
 
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RouterPortState {
-    pub config: RouterPortConfig,
-    pub up: bool,
-    pub switch_registration: SwitchRegistrationState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,66 +176,36 @@ pub struct FibEntry {
     pub origin: FibOrigin,
 }
 
-/// Static GNet router reference implementation.
-///
-/// Rust owns startup configuration, node/port management state and P4 table
-/// programming. The P4 pipeline owns normal per-packet LPM and Hop-Limit work.
+/// Fixed two-port GNet router with a Rust startup/configuration plane and a P4
+/// GDP forwarding plane. Both physical links are assumed available for this
+/// milestone; DLP link lifecycle is deliberately outside this object.
 pub struct StaticP4Router {
     pipeline: main_pipeline,
-    physical_ports: u16,
     cpu_port: u16,
     startup: RouterStartupConfig,
-    ports: Vec<RouterPortState>,
-    nodes: BTreeMap<GdpAddress, RouterNodeRecord>,
     fib: Vec<FibEntry>,
-    fib_generation: u64,
 }
 
 impl StaticP4Router {
-    pub fn new(startup: RouterStartupConfig) -> Result<Self> {
+    pub fn new(startup: RouterStartupConfig) -> crate::error::Result<Self> {
         startup.validate()?;
-        let physical_ports = startup.ports.len() as u16;
-        let cpu_port = physical_ports;
-        let ports = startup
-            .ports
-            .iter()
-            .copied()
-            .map(|config| RouterPortState {
-                switch_registration: match config.attachment {
-                    RouterAttachment::Switch => SwitchRegistrationState::Unregistered,
-                    RouterAttachment::Direct | RouterAttachment::Coupler => {
-                        SwitchRegistrationState::NotRequired
-                    }
-                },
-                config,
-                up: true,
-            })
-            .collect();
-
+        let cpu_port = ROUTER_PORT_COUNT;
         let mut router = Self {
-            pipeline: main_pipeline::new(physical_ports + 1),
-            physical_ports,
+            pipeline: main_pipeline::new(ROUTER_PORT_COUNT + 1),
             cpu_port,
             startup,
-            ports,
-            nodes: BTreeMap::new(),
             fib: Vec::new(),
-            fib_generation: 0,
         };
         router.compile_startup_fib()?;
         Ok(router)
     }
 
     pub const fn physical_port_count(&self) -> u16 {
-        self.physical_ports
+        ROUTER_PORT_COUNT
     }
 
     pub const fn cpu_port(&self) -> u16 {
         self.cpu_port
-    }
-
-    pub const fn fib_generation(&self) -> u64 {
-        self.fib_generation
     }
 
     pub fn startup_config(&self) -> &RouterStartupConfig {
@@ -285,101 +216,16 @@ impl StaticP4Router {
         &self.fib
     }
 
-    pub fn port(&self, port: RouterPortId) -> Result<RouterPortState> {
-        self.ports
-            .get(port as usize)
-            .copied()
-            .ok_or(Error::InvalidField)
-    }
-
-    pub fn node(&self, link_local: GdpAddress) -> Option<RouterNodeRecord> {
-        self.nodes.get(&link_local).copied()
-    }
-
-    pub fn node_by_routed_address(&self, address: GdpAddress) -> Option<RouterNodeRecord> {
-        self.nodes
-            .values()
-            .copied()
-            .find(|node| node.routed_address == Some(address))
-    }
-
-    pub fn nodes(&self) -> impl Iterator<Item = RouterNodeRecord> + '_ {
-        self.nodes.values().copied()
-    }
-
-    pub fn record_node(
-        &mut self,
-        ingress_port: RouterPortId,
-        link_local: GdpAddress,
-    ) -> Result<RouterNodeRecord> {
-        self.port(ingress_port)?;
-        if !is_link_local(link_local) || link_local == ROUTER_BOOTSTRAP_ADDRESS {
-            return Err(Error::InvalidField);
-        }
-        if self
-            .startup
-            .ports
-            .iter()
-            .any(|port| port.link_local == link_local)
-        {
-            return Err(Error::InvalidField);
-        }
-
-        let record = RouterNodeRecord {
-            link_local,
-            routed_address: None,
-            ingress_port,
-            state: NodeState::Observed,
-        };
-        match self.nodes.get(&link_local) {
-            Some(existing) if existing.ingress_port != ingress_port => Err(Error::InvalidState),
-            Some(existing) => Ok(*existing),
-            None => {
-                self.nodes.insert(link_local, record);
-                Ok(record)
-            }
-        }
-    }
-
-    pub fn configure_node_address(
-        &mut self,
-        link_local: GdpAddress,
-        routed_address: GdpAddress,
-    ) -> Result<RouterNodeRecord> {
-        let current = self.nodes.get(&link_local).copied().ok_or(Error::InvalidState)?;
-        let port = self.port(current.ingress_port)?;
-        let prefix = port.config.connected_prefix.ok_or(Error::InvalidState)?;
-        if !prefix.contains(routed_address)
-            || is_link_local(routed_address)
-            || port.config.routed_address == Some(routed_address)
-            || self.node_by_routed_address(routed_address).is_some()
-        {
-            return Err(Error::InvalidField);
-        }
-
-        let updated = RouterNodeRecord {
-            routed_address: Some(routed_address),
-            state: NodeState::Configured,
-            ..current
-        };
-        self.nodes.insert(link_local, updated);
-        Ok(updated)
-    }
-
-    pub fn remove_node(&mut self, link_local: GdpAddress) -> Option<RouterNodeRecord> {
-        self.nodes.remove(&link_local)
-    }
-
-    /// Process one complete GDP packet through the P4 forwarding pipeline.
-    /// Ordinary forwarding decisions are made by P4; Rust only interprets the
-    /// P4-selected output as physical egress, CPU punt, or drop.
+    /// Run one complete GDP packet through the P4 forwarding plane. For the
+    /// first two-port router, forwarding back out the ingress port is rejected
+    /// as a hairpin and dropped; every transit packet must cross the router.
     pub fn process(
         &mut self,
         ingress_port: RouterPortId,
         packet: GdpPacket,
-    ) -> Result<RouterDisposition> {
-        if ingress_port >= self.physical_ports || !self.port(ingress_port)?.up {
-            return Err(Error::LinkDown);
+    ) -> crate::error::Result<RouterDisposition> {
+        if ingress_port >= ROUTER_PORT_COUNT {
+            return Err(Error::InvalidField);
         }
 
         let local_prefix = match &packet.header.addresses {
@@ -411,7 +257,7 @@ impl StaticP4Router {
         }
 
         let egress_port = port as RouterPortId;
-        if egress_port >= self.physical_ports || !self.port(egress_port)?.up {
+        if egress_port >= ROUTER_PORT_COUNT || egress_port == ingress_port {
             return Ok(RouterDisposition::Drop);
         }
         Ok(RouterDisposition::Forward {
@@ -420,19 +266,14 @@ impl StaticP4Router {
         })
     }
 
-    fn compile_startup_fib(&mut self) -> Result<()> {
-        let mut pipeline = main_pipeline::new(self.physical_ports + 1);
+    fn compile_startup_fib(&mut self) -> crate::error::Result<()> {
+        let mut pipeline = main_pipeline::new(ROUTER_PORT_COUNT + 1);
         let mut fib = Vec::new();
         let mut programmed_global = BTreeSet::new();
 
         let bootstrap = GdpPrefix::new(ROUTER_BOOTSTRAP_ADDRESS, 64)
             .map_err(|_| Error::InvalidField)?;
-        program_global(
-            &mut pipeline,
-            bootstrap,
-            "punt",
-            &self.cpu_port.to_le_bytes(),
-        );
+        program_global(&mut pipeline, bootstrap, "punt", &self.cpu_port.to_le_bytes());
         programmed_global.insert(bootstrap);
         fib.push(FibEntry {
             prefix: bootstrap,
@@ -447,12 +288,7 @@ impl StaticP4Router {
             {
                 let prefix = GdpPrefix::new(address, 64).map_err(|_| Error::InvalidField)?;
                 if programmed_global.insert(prefix) {
-                    program_global(
-                        &mut pipeline,
-                        prefix,
-                        "punt",
-                        &self.cpu_port.to_le_bytes(),
-                    );
+                    program_global(&mut pipeline, prefix, "punt", &self.cpu_port.to_le_bytes());
                     fib.push(FibEntry {
                         prefix,
                         egress_port: None,
@@ -472,12 +308,7 @@ impl StaticP4Router {
                 if !programmed_global.insert(prefix) {
                     return Err(Error::InvalidField);
                 }
-                program_global(
-                    &mut pipeline,
-                    prefix,
-                    "forward",
-                    &port.id.to_le_bytes(),
-                );
+                program_global(&mut pipeline, prefix, "forward", &port.id.to_le_bytes());
                 fib.push(FibEntry {
                     prefix,
                     egress_port: Some(port.id),
@@ -505,17 +336,12 @@ impl StaticP4Router {
 
         self.pipeline = pipeline;
         self.fib = fib;
-        self.fib_generation = self.fib_generation.wrapping_add(1).max(1);
         Ok(())
     }
 }
 
 fn is_link_local(address: GdpAddress) -> bool {
     (address.0 >> 48) as u16 == 0xfe80
-}
-
-fn is_address_authority_prefix(prefix: GdpPrefix) -> bool {
-    matches!(prefix.prefix_len(), 16 | 32 | 48 | 56)
 }
 
 fn program_local_punt(
