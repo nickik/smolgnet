@@ -174,7 +174,11 @@ fn detect_wait_cycles(flows: &[Flow]) -> Vec<Vec<usize>> {
 
 fn assert_closed_wait_cycle(flows: &[Flow], expected: &[usize]) {
     let cycles = detect_wait_cycles(flows);
-    assert_eq!(cycles.len(), 1, "expected exactly one wait cycle: {cycles:?}");
+    assert_eq!(
+        cycles.len(),
+        1,
+        "expected exactly one wait cycle: {cycles:?}"
+    );
     assert_eq!(cycles[0].len(), expected.len());
     assert_eq!(
         cycles[0].iter().copied().collect::<BTreeSet<_>>(),
@@ -242,12 +246,7 @@ fn vc0_reserved_for_escape_breaks_the_same_cycle() {
 
     // In this minimal case escape is the final hop, so there is no VC0->VC0
     // dependency at all.
-    assert_acyclic_escape_paths(&[
-        vec![(1, 10)],
-        vec![(2, 20)],
-        vec![(3, 30)],
-        vec![(0, 40)],
-    ]);
+    assert_acyclic_escape_paths(&[vec![(1, 10)], vec![(2, 20)], vec![(3, 30)], vec![(0, 40)]]);
 }
 
 #[test]
