@@ -9,13 +9,7 @@ fn prefix(value: u64) -> GdpPrefix {
 
 fn packet(source: GdpAddress, destination: GdpAddress) -> GdpPacket {
     GdpPacket::new(
-        GdpHeader::global(
-            GdpType::Gts,
-            SizeClass::Ctrl32,
-            16,
-            source,
-            destination,
-        ),
+        GdpHeader::global(GdpType::Gts, SizeClass::Ctrl32, 16, source, destination),
         vec![0x5a; SizeClass::Ctrl32.bytes()],
     )
     .unwrap()
@@ -45,7 +39,8 @@ fn learned_cross_router_routes_are_installed_without_static_configuration() {
             .unwrap();
     }
     for advertisement in right.advertisements_for(left_id, RouteMetric::DEFAULT_LINK) {
-        left.receive_advertisement(right_id, 1, advertisement).unwrap();
+        left.receive_advertisement(right_id, 1, advertisement)
+            .unwrap();
     }
 
     assert_eq!(left.learned_routes().len(), 1);
