@@ -341,7 +341,20 @@ fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
     assert_eq!(decode_gctl(&grant).message_type, GctlType::Credit);
     client.receive_frame(grant, 2).unwrap();
     cable.pump(&mut client, &mut server, 2, 100_000).unwrap();
-    while server.recv(sh, 0).unwrap().is_some() {}
+    let mut saw_first = false;
+    let mut saw_second = false;
+    while let Some(message) = server.recv(sh, 0).unwrap() {
+        saw_first |= message == b"first packet";
+        saw_second |= message == b"second packet";
+    }
+    assert!(
+        saw_first,
+        "first packet did not arrive after credit recovery"
+    );
+    assert!(
+        saw_second,
+        "second packet did not arrive after credit recovery"
+    );
     assert_eq!(client.control_state(), DlpControlState::Up);
     assert_eq!(server.control_state(), DlpControlState::Up);
 }
