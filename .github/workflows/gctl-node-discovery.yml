@@ -3,8 +3,13 @@ name: GCTL Node Discovery
 on:
   pull_request:
     paths:
+      - 'src/dynamic_routing.rs'
       - 'src/wire/gctl.rs'
+      - 'src/wire/gctl_routing.rs'
+      - 'src/wire/mod.rs'
+      - 'src/lib.rs'
       - 'tests/gctl_node_discovery.rs'
+      - 'tests/dynamic_routing_stage1.rs'
       - 'tests/wire.rs'
       - 'Cargo.toml'
       - '.github/workflows/gctl-node-discovery.yml'
@@ -21,8 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run GCTL discovery and existing wire tests
+      - name: Run GCTL routing, discovery and existing wire tests
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=5s 90s \
-            cargo test --test gctl_node_discovery --test wire -- --nocapture --test-threads=1
+            cargo test --test dynamic_routing_stage1 --test gctl_node_discovery --test wire -- --nocapture --test-threads=1
