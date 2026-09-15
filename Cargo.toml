@@ -29,7 +29,7 @@ p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd
 p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
 bitvec = { version = "1.0", optional = true }
 colored = { version = "3", optional = true }
-num = { version = "0.4", features = ["serde"], optional = true }
+num = { version = "0.4", features = ["serde"] , optional = true }
 usdt = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
@@ -153,4 +153,9 @@ required-features = ["p4-router", "p4-switch"]
 [[test]]
 name = "two_switch_16_peer_topology"
 path = "tests/two_switch_16_peer_topology.rs"
+required-features = ["p4-router", "p4-switch"]
+
+[[test]]
+name = "router_to_router_simulation"
+path = "tests/router_to_router_simulation.rs"
 required-features = ["p4-router", "p4-switch"]
