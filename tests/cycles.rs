@@ -27,15 +27,9 @@ fn node_prefix(index: usize) -> GdpPrefix {
 }
 
 fn router(index: usize, policy: RouterVc0Policy) -> CycleAwareRouter {
-    let p0 = RouterPortConfig::new(
-        0,
-        GdpAddress(0xfe80_0000_0000_0100 + index as u64 * 2),
-    )
-    .with_connected_network(node_prefix(index), node_address(index));
-    let p1 = RouterPortConfig::new(
-        1,
-        GdpAddress(0xfe80_0000_0000_0101 + index as u64 * 2),
-    );
+    let p0 = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0100 + index as u64 * 2))
+        .with_connected_network(node_prefix(index), node_address(index));
+    let p1 = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0101 + index as u64 * 2));
     let routes = vec![StaticRouteConfig::direct(GdpPrefix::default_route(), 1)];
     CycleAwareRouter::new(RouterStartupConfig::new(vec![p0, p1], routes), policy).unwrap()
 }
@@ -46,13 +40,7 @@ fn packet(flow: usize) -> GdpPacket {
     let mut payload = vec![0x40 + flow as u8; 32];
     payload[0] = flow as u8;
     GdpPacket::new(
-        GdpHeader::global(
-            GdpType::Gts,
-            SizeClass::Ctrl32,
-            8,
-            source,
-            destination,
-        ),
+        GdpHeader::global(GdpType::Gts, SizeClass::Ctrl32, 8, source, destination),
         payload,
     )
     .unwrap()
