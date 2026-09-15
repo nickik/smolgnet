@@ -29,22 +29,24 @@ P7 -/
 - Re-registering a node on another port moves the forwarding entry deterministically.
 - Multiple nodes may map to the same port.
 
-## Test-first checklist
+## Completed milestone
 
-- [ ] Require exactly eight physical ports.
-- [ ] Register and remove node-to-port entries.
-- [ ] Reject invalid port IDs.
-- [ ] Forward port 0 -> port 7.
-- [ ] Forward port 7 -> port 0.
-- [ ] Preserve the complete GDP packet byte-for-byte.
-- [ ] Do not decrement GDP Hop Limit.
-- [ ] Drop unknown destinations.
-- [ ] Drop same-port hairpins.
-- [ ] Move a node from one port to another.
-- [ ] Support multiple nodes behind one port.
-- [ ] Keep local-form GDP off the transit switching path.
-- [ ] Add a P4 exact-match fast path matching the Rust-visible contract.
-- [ ] Bound CI runtime and expose test output.
+- [x] Require exactly eight physical ports.
+- [x] Register and remove node-to-port entries.
+- [x] Reject invalid port IDs.
+- [x] Forward port 0 -> port 7.
+- [x] Forward port 7 -> port 0.
+- [x] Exercise every non-hairpin ingress/egress port pair.
+- [x] Preserve the complete GDP packet byte-for-byte.
+- [x] Do not decrement GDP Hop Limit.
+- [x] Drop unknown destinations.
+- [x] Drop same-port hairpins.
+- [x] Move a node from one port to another.
+- [x] Support multiple nodes behind one port.
+- [x] Keep local-form GDP off the transit switching path.
+- [x] Add a P4 exact-match fast path matching the Rust-visible contract.
+- [x] Reuse smolgnet's existing x4c/P4 GDP parser and SoftNPU model.
+- [x] Bound CI runtime and expose test output.
 
 ## Explicitly deferred
 
