@@ -36,11 +36,7 @@ impl RouterPortConfig {
         }
     }
 
-    pub fn with_connected_network(
-        mut self,
-        prefix: GdpPrefix,
-        router_address: GdpAddress,
-    ) -> Self {
+    pub fn with_connected_network(mut self, prefix: GdpPrefix, router_address: GdpAddress) -> Self {
         self.connected_prefix = Some(prefix);
         self.routed_address = Some(router_address);
         self
@@ -65,11 +61,7 @@ impl StaticRouteConfig {
         }
     }
 
-    pub const fn via(
-        prefix: GdpPrefix,
-        egress_port: RouterPortId,
-        next_hop: GdpAddress,
-    ) -> Self {
+    pub const fn via(prefix: GdpPrefix, egress_port: RouterPortId, next_hop: GdpAddress) -> Self {
         Self {
             prefix,
             egress_port,
@@ -138,7 +130,8 @@ impl RouterStartupConfig {
             }
             if route.prefix.prefix_len() == 64 {
                 let destination = route.prefix.network();
-                if destination == ROUTER_BOOTSTRAP_ADDRESS || owned_addresses.contains(&destination) {
+                if destination == ROUTER_BOOTSTRAP_ADDRESS || owned_addresses.contains(&destination)
+                {
                     return Err(Error::InvalidField);
                 }
             }
@@ -271,9 +264,14 @@ impl StaticP4Router {
         let mut fib = Vec::new();
         let mut programmed_global = BTreeSet::new();
 
-        let bootstrap = GdpPrefix::new(ROUTER_BOOTSTRAP_ADDRESS, 64)
-            .map_err(|_| Error::InvalidField)?;
-        program_global(&mut pipeline, bootstrap, "punt", &self.cpu_port.to_le_bytes());
+        let bootstrap =
+            GdpPrefix::new(ROUTER_BOOTSTRAP_ADDRESS, 64).map_err(|_| Error::InvalidField)?;
+        program_global(
+            &mut pipeline,
+            bootstrap,
+            "punt",
+            &self.cpu_port.to_le_bytes(),
+        );
         programmed_global.insert(bootstrap);
         fib.push(FibEntry {
             prefix: bootstrap,
@@ -297,7 +295,12 @@ impl StaticP4Router {
                 }
             }
 
-            program_local_punt(&mut pipeline, port.id, port.link_local.0 as u16, self.cpu_port);
+            program_local_punt(
+                &mut pipeline,
+                port.id,
+                port.link_local.0 as u16,
+                self.cpu_port,
+            );
             if let Some(address) = port.routed_address {
                 program_local_punt(&mut pipeline, port.id, address.0 as u16, self.cpu_port);
             }
@@ -361,12 +364,7 @@ fn program_local_punt(
     );
 }
 
-fn program_global(
-    pipeline: &mut main_pipeline,
-    prefix: GdpPrefix,
-    action: &str,
-    params: &[u8],
-) {
+fn program_global(pipeline: &mut main_pipeline, prefix: GdpPrefix, action: &str, params: &[u8]) {
     let value = prefix.network().0;
     let len = prefix.prefix_len();
     if len > 32 {
@@ -375,23 +373,11 @@ fn program_global(
         let mut key = hi.to_le_bytes().to_vec();
         key.extend_from_slice(&lo.to_be_bytes());
         key.push(len - 32);
-        pipeline.add_table_entry(
-            "ingress.global_long_routes",
-            action,
-            &key,
-            params,
-            0,
-        );
+        pipeline.add_table_entry("ingress.global_long_routes", action, &key, params, 0);
     } else {
         let hi = (value >> 32) as u32;
         let mut key = hi.to_be_bytes().to_vec();
         key.push(len);
-        pipeline.add_table_entry(
-            "ingress.global_short_routes",
-            action,
-            &key,
-            params,
-            0,
-        );
+        pipeline.add_table_entry("ingress.global_short_routes", action, &key, params, 0);
     }
 }
