@@ -1,0 +1,36 @@
+name: Static P4 Switch
+
+on:
+  pull_request:
+    paths:
+      - 'src/static_switch.rs'
+      - 'src/lib.rs'
+      - 'p4-static-switch/**'
+      - 'tests/static_p4_switch.rs'
+      - 'docs/GS3_EIGHT_PORT_SWITCH_TODO.md'
+      - 'Cargo.toml'
+      - '.github/workflows/static-p4-switch.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check switch source formatting
+        run: rustfmt --check src/static_switch.rs tests/static_p4_switch.rs
+      - name: Check eight-port switch
+        run: cargo check --features p4-switch --test static_p4_switch
+      - name: Run eight-port switch tests with bounded runtime and debug output
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 90s \
+            cargo test --features p4-switch --test static_p4_switch -- --nocapture --test-threads=1

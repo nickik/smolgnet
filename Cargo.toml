@@ -33,6 +33,8 @@ p4-gts = ["p4-runtime"]
 p4-gts-compare = ["p4-gts"]
 # Production-style static GDP router: Rust management plane plus x4c/P4 fast path.
 p4-router = ["p4-runtime"]
+# Fixed eight-port GS3 switch; P4 fast path is added behind this feature.
+p4-switch = ["p4-runtime"]
 
 [dependencies]
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
@@ -139,3 +141,8 @@ required-features = ["p4-gts"]
 name = "static_p4_router"
 path = "tests/static_p4_router.rs"
 required-features = ["p4-router"]
+
+[[test]]
+name = "static_p4_switch"
+path = "tests/static_p4_switch.rs"
+required-features = ["p4-switch"]
