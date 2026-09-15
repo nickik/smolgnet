@@ -64,7 +64,7 @@ fn learned_cross_router_routes_are_installed_without_static_configuration() {
 }
 
 #[test]
-fn failed_neighbor_reprograms_p4_to_alternate_and_removes_stale_route() {
+fn hold_timeout_reprograms_p4_to_alternate_and_removes_stale_route() {
     let local = RouterId::new(0x1000).unwrap();
     let preferred = RouterId::new(0x2000).unwrap();
     let alternate = RouterId::new(0x3000).unwrap();
@@ -75,6 +75,28 @@ fn failed_neighbor_reprograms_p4_to_alternate_and_removes_stale_route() {
     let port0 = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0100));
     let port1 = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0101));
     let mut router = DynamicP4Router::new(local, vec![port0, port1], vec![]).unwrap();
+    let mut preferred_adjacency = RouterAdjacency::new(
+        local,
+        LinkId::new(0x100).unwrap(),
+        RouteMetric(100),
+        1_000,
+    )
+    .unwrap();
+    preferred_adjacency
+        .receive(
+            Instant::ZERO,
+            RoutingGctlMessage::router_hello(
+                1,
+                RouterHello {
+                    router_id: preferred,
+                    link_id: LinkId::new(0x200).unwrap(),
+                    hold_time_ms: 1_000,
+                    metric: RouteMetric(100),
+                },
+            ),
+        )
+        .unwrap();
+    assert_eq!(preferred_adjacency.state(), NeighborState::Up);
 
     router
         .receive_advertisement(
@@ -107,12 +129,15 @@ fn failed_neighbor_reprograms_p4_to_alternate_and_removes_stale_route() {
         other => panic!("preferred learned route was not active: {other:?}"),
     }
 
-    let changed = router.neighbor_down(preferred).unwrap();
+    let changed = router
+        .expire_adjacency(&mut preferred_adjacency, Instant::from_millis(1_000))
+        .unwrap();
     assert_eq!(changed, vec![destination_prefix]);
+    assert_eq!(preferred_adjacency.state(), NeighborState::Down);
     assert_eq!(router.learned_routes()[0].learned_from, Some(alternate));
     match router.process(0, packet(source, destination)).unwrap() {
         RouterDisposition::Forward { egress_port, .. } => assert_eq!(egress_port, 1),
-        other => panic!("alternate learned route was not installed after failure: {other:?}"),
+        other => panic!("alternate learned route was not installed after timeout: {other:?}"),
     }
 
     let changed = router.neighbor_down(alternate).unwrap();
@@ -139,4 +164,127 @@ fn failed_neighbor_reprograms_p4_to_alternate_and_removes_stale_route() {
         RouterDisposition::Forward { egress_port, .. } => assert_eq!(egress_port, 0),
         other => panic!("restored preferred route was not reinstalled: {other:?}"),
     }
+}
+
+#[test]
+fn four_router_failure_reconverges_end_to_end_over_alternate_path() {
+    let a_id = RouterId::new(10).unwrap();
+    let b_id = RouterId::new(20).unwrap();
+    let c_id = RouterId::new(30).unwrap();
+    let d_id = RouterId::new(40).unwrap();
+    let destination_prefix = prefix(0x7707_0000_0000_0000);
+    let destination = GdpAddress(0x7707_0000_0000_0001);
+    let source = GdpAddress(0x8808_0000_0000_0001);
+
+    let mut a = DynamicP4Router::new(
+        a_id,
+        vec![
+            RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0a00)),
+            RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0a01)),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let mut b = DynamicP4Router::new(
+        b_id,
+        vec![
+            RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0b00)),
+            RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0b01)),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let mut c = DynamicP4Router::new(
+        c_id,
+        vec![
+            RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0c00)),
+            RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0c01)),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let mut d = DynamicP4Router::new(
+        d_id,
+        vec![
+            RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0d00))
+                .with_connected_network(destination_prefix, destination),
+            RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0d01)),
+        ],
+        vec![],
+    )
+    .unwrap();
+
+    let d_to_b = d.advertisements_for(b_id, RouteMetric(100));
+    let d_to_c = d.advertisements_for(c_id, RouteMetric(200));
+    b.receive_advertisement(d_id, 1, d_to_b[0]).unwrap();
+    c.receive_advertisement(d_id, 1, d_to_c[0]).unwrap();
+    let b_to_a = b.advertisements_for(a_id, RouteMetric(50));
+    let c_to_a = c.advertisements_for(a_id, RouteMetric(50));
+    a.receive_advertisement(b_id, 0, b_to_a[0]).unwrap();
+    a.receive_advertisement(c_id, 1, c_to_a[0]).unwrap();
+    assert_eq!(a.learned_routes()[0].learned_from, Some(b_id));
+
+    let packet = match a.process(1, packet(source, destination)).unwrap() {
+        RouterDisposition::Forward {
+            egress_port,
+            packet,
+        } => {
+            assert_eq!(egress_port, 0);
+            packet
+        }
+        other => panic!("A did not select preferred path through B: {other:?}"),
+    };
+    let packet = match b.process(0, packet).unwrap() {
+        RouterDisposition::Forward {
+            egress_port,
+            packet,
+        } => {
+            assert_eq!(egress_port, 1);
+            packet
+        }
+        other => panic!("B did not forward to D: {other:?}"),
+    };
+    assert!(matches!(
+        d.process(0, packet).unwrap(),
+        RouterDisposition::Punt { .. }
+    ));
+
+    let changed = b.neighbor_down(d_id).unwrap();
+    let update = b.updates_for(a_id, RouteMetric(50), &changed);
+    let withdrawal = match update.as_slice() {
+        [RouteUpdate::Withdraw(withdrawal)] => *withdrawal,
+        other => panic!("B did not trigger the expected withdrawal: {other:?}"),
+    };
+    assert!(a.receive_withdrawal(b_id, withdrawal).unwrap());
+    assert_eq!(a.learned_routes()[0].learned_from, Some(c_id));
+
+    let packet = match a.process(0, packet(source, destination)).unwrap() {
+        RouterDisposition::Forward {
+            egress_port,
+            packet,
+        } => {
+            assert_eq!(egress_port, 1);
+            packet
+        }
+        other => panic!("A did not reconverge to C: {other:?}"),
+    };
+    let packet = match c.process(0, packet).unwrap() {
+        RouterDisposition::Forward {
+            egress_port,
+            packet,
+        } => {
+            assert_eq!(egress_port, 1);
+            packet
+        }
+        other => panic!("C did not forward alternate traffic to D: {other:?}"),
+    };
+    assert!(matches!(
+        d.process(1, packet).unwrap(),
+        RouterDisposition::Punt { .. }
+    ));
+
+    b.receive_advertisement(d_id, 1, d_to_b[0]).unwrap();
+    let restored = b.advertisements_for(a_id, RouteMetric(50));
+    a.receive_advertisement(b_id, 0, restored[0]).unwrap();
+    assert_eq!(a.learned_routes()[0].learned_from, Some(b_id));
 }
