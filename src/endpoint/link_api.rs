@@ -35,10 +35,34 @@ impl Endpoint {
         self.advertise_link_credit(true)
     }
 
-    /// Allow the managed DLP wrapper to retry a GCTL CREDIT_REQUEST after the
-    /// previous request was lost on the data path.
+    /// Retry a managed-link CREDIT_REQUEST when queued data no longer fits in
+    /// the remaining transmit-credit balance. Credit is measured in flits, so
+    /// a non-zero tail can still be unusable for the next complete GDP frame.
+    ///
+    /// This is deliberately best-effort because it is called from the bounded
+    /// stalled-poll retry path. If the control queue cannot accept the request,
+    /// the pending flag remains clear and the next retry interval tries again.
     pub(crate) fn retry_managed_link_credit_request(&mut self) {
         self.credit_request_pending = false;
+
+        let queued = self.dlp.queued_data_flits();
+        let credit = self.dlp.data_tx_credit() as usize;
+        if queued == 0 || queued <= credit {
+            return;
+        }
+        let Some(peer) = self.peer_link_local else {
+            return;
+        };
+
+        let requested = queued.saturating_sub(credit).min(u32::MAX as usize) as u32;
+        let tx = self.next_control_transaction();
+        let msg = GctlMessage::credit_request(tx, requested.max(1));
+        if self
+            .send_gctl_from(self.link_local_address, peer, msg, None)
+            .is_ok()
+        {
+            self.credit_request_pending = true;
+        }
     }
 
     fn validate_managed_credit_grant(&self, packet: &GdpPacket, peer_limit: u32) -> Result<()> {
