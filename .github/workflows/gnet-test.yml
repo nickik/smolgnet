@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,28 +17,49 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      # Required compatibility gate: every higher-level test under all four
-      # production GDP/GTS backend combinations plus crossed compare modes.
+      - name: Fast point-to-point correctness gate
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo check --lib
+          cargo test --lib
+          cargo test --test dlp_v01
+          cargo test --test dlp_gdp_boundary
+
+      - name: Test heapless no-alloc API
+        if: github.event_name == 'pull_request'
+        run: cargo test --no-default-features --test heapless_api
+
       - name: Validate complete GDP/GTS backend matrix
+        if: github.event_name != 'pull_request'
         run: bash scripts/test-backend-matrix.sh
 
       - name: Run standalone P4 GDP conformance suite
+        if: github.event_name != 'pull_request'
         run: cargo test --manifest-path p4-gdp/Cargo.toml --all-targets
+
       - name: Test async/waker support
+        if: github.event_name != 'pull_request'
         run: cargo test --all-targets --features async
       - name: Test heapless no-alloc API
+        if: github.event_name != 'pull_request'
         run: cargo test --no-default-features --test heapless_api
       - name: Check no-std without alloc
+        if: github.event_name != 'pull_request'
         run: cargo check --no-default-features
 
       - name: Microbenchmark handwritten vs P4 GTS RX and TX wire backends
+        if: github.event_name != 'pull_request'
         run: GDP_BACKEND=handwritten GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test gts_performance -- --ignored --nocapture
 
       - name: Throughput handwritten GDP + handwritten GTS
+        if: github.event_name != 'pull_request'
         run: GDP_BACKEND=handwritten GTS_BACKEND=handwritten bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
       - name: Throughput P4 GDP + handwritten GTS
+        if: github.event_name != 'pull_request'
         run: GDP_BACKEND=p4 GTS_BACKEND=handwritten bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
       - name: Throughput handwritten GDP + P4 GTS
+        if: github.event_name != 'pull_request'
         run: GDP_BACKEND=handwritten GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture
       - name: Throughput P4 GDP + P4 GTS
+        if: github.event_name != 'pull_request'
         run: GDP_BACKEND=p4 GTS_BACKEND=p4 bash scripts/backend-cargo.sh test --release --test performance -- --ignored --nocapture

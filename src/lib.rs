@@ -14,6 +14,8 @@ pub mod wire;
 #[cfg(feature = "alloc")]
 pub mod dlp;
 #[cfg(feature = "alloc")]
+pub mod dlp_control;
+#[cfg(feature = "alloc")]
 pub mod dlp_gdp;
 #[cfg(feature = "alloc")]
 pub mod dlp_v01;
@@ -59,6 +61,12 @@ pub use wire::gts::{Direction, GtsType, StreamProfile};
 
 #[cfg(feature = "alloc")]
 pub use dlp::{DlpConfig, DlpEndpoint, Flit, GnetFrame, LinkTraffic, VcMode, Vcid};
+#[cfg(feature = "alloc")]
+pub use dlp_control::{
+    DlpCapabilityKind, DlpControlFrame, DlpControlOpcode, DlpControlState, DlpDirectCable,
+    DlpHelloKind, DlpManagedEndpoint, DlpNegotiatedProfile, DLP_CONTROL_FRAME_LEN,
+    DLP_CONTROL_PARAMETER_UNIT_FLITS, DLP_CONTROL_VERSION, DLP_RESERVED_CONTROL_WINDOW_FLITS,
+};
 #[cfg(feature = "alloc")]
 pub use dlp_gdp::{DlpGdpPort, GdpPacketPort};
 #[cfg(feature = "alloc")]
