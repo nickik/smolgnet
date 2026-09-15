@@ -261,10 +261,8 @@ fn static_route_validation_rejects_invalid_ports_duplicates_and_next_hops() {
     assert_eq!(duplicate.validate(), Err(Error::InvalidField));
 
     let connected_prefix = prefix(0x1200_0000_0000_0000, 16);
-    let connected = port(0).with_connected_network(
-        connected_prefix,
-        GdpAddress(0x1200_0000_0000_0001),
-    );
+    let connected =
+        port(0).with_connected_network(connected_prefix, GdpAddress(0x1200_0000_0000_0001));
     let duplicate_connected = RouterStartupConfig::new(
         vec![connected, port(1)],
         vec![StaticRouteConfig::direct(connected_prefix, 1)],
@@ -300,10 +298,7 @@ fn static_route_validation_rejects_invalid_ports_duplicates_and_next_hops() {
 
 #[test]
 fn static_64_routes_cannot_capture_router_or_bootstrap_addresses() {
-    for destination in [
-        ROUTER_BOOTSTRAP_ADDRESS,
-        GdpAddress(0xfe80_0000_0000_0001),
-    ] {
+    for destination in [ROUTER_BOOTSTRAP_ADDRESS, GdpAddress(0xfe80_0000_0000_0001)] {
         let config = RouterStartupConfig::new(
             vec![port(0), port(1)],
             vec![StaticRouteConfig::direct(prefix(destination.0, 64), 1)],
