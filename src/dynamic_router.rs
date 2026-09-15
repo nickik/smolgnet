@@ -4,11 +4,13 @@ use alloc::vec::Vec;
 
 use crate::dynamic_routing::{RouteMetric, RouteOrigin, RouterId};
 use crate::error::{Error, Result};
+use crate::router_adjacency::RouterAdjacency;
 use crate::router_rib::{RouteUpdate, RouterRib, SelectedRoute};
 use crate::static_router::{
     RouterDisposition, RouterPortConfig, RouterPortId, RouterStartupConfig, StaticP4Router,
     StaticRouteConfig,
 };
+use crate::time::Instant;
 use crate::wire::gctl_routing::{RouteAdvertise, RouteWithdraw};
 use crate::wire::gdp::GdpPacket;
 
@@ -105,6 +107,24 @@ impl DynamicP4Router {
             self.rebuild_forwarding()?;
         }
         Ok(changed)
+    }
+
+    pub fn expire_adjacency(
+        &mut self,
+        adjacency: &mut RouterAdjacency,
+        now: Instant,
+    ) -> Result<Vec<crate::routing::GdpPrefix>> {
+        if adjacency.local_router_id() != self.router_id {
+            return Err(Error::InvalidField);
+        }
+        let neighbor = adjacency.neighbor().map(|neighbor| neighbor.router_id);
+        if !adjacency.expire(now) {
+            return Ok(Vec::new());
+        }
+        match neighbor {
+            Some(neighbor) => self.neighbor_down(neighbor),
+            None => Ok(Vec::new()),
+        }
     }
 
     pub fn process(
