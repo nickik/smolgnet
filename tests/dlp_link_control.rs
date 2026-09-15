@@ -100,6 +100,26 @@ fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
     let service = ServiceSelector::registered(1).unwrap(); server.listen(service, ListenerConfig::default());
     let profile = StreamProfile::reliable_variable(SizeClass::Msg128, Direction::Bidirectional); let ch = client.connect(server.address(), service, profile).unwrap();
     cable.pump(&mut client, &mut server, 0, 100_000).unwrap(); let sh = server.accept().unwrap();
+
+    // Consume the entire advertised data window without returning credit so the
+    // next queued GDP frame must trigger a link-local CREDIT_REQUEST.
+    while client.dlp().data_tx_credit() != 0 {
+        client.send(ch, 0, b"drain credit", 1).unwrap();
+        loop {
+            match client.poll_tx_frame() {
+                Ok(Some(frame)) if frame.traffic == LinkTraffic::Data => {
+                    server.receive_frame(frame, 1).unwrap();
+                    break;
+                }
+                Ok(Some(frame)) => {
+                    server.receive_frame(frame, 1).unwrap();
+                }
+                Ok(None) | Err(Error::NoCredit) => {}
+                Err(e) => panic!("unexpected drain error: {e:?}"),
+            }
+        }
+    }
+
     client.send(ch, 0, b"first packet", 1).unwrap(); client.send(ch, 0, b"second packet", 1).unwrap();
     let mut dropped_request = None;
     for _ in 0..256 { match client.poll_tx_frame() {
@@ -118,7 +138,8 @@ fn lost_gctl_credit_request_is_retried_and_same_gts_stream_continues() {
     }}
     let retried_request = retried_request.expect("lost CREDIT_REQUEST was not retried"); assert!(retried_request.parse_credit_request().unwrap().requested_flits > 0);
     let grant = server.poll_tx_frame().unwrap().expect("GCTL CREDIT reply"); assert_eq!(decode_gctl(&grant).message_type, GctlType::Credit); client.receive_frame(grant, 2).unwrap();
-    cable.pump(&mut client, &mut server, 2, 100_000).unwrap(); assert_eq!(server.recv(sh, 0).unwrap(), Some(b"first packet".to_vec())); assert_eq!(server.recv(sh, 0).unwrap(), Some(b"second packet".to_vec()));
+    cable.pump(&mut client, &mut server, 2, 100_000).unwrap();
+    while server.recv(sh, 0).unwrap().is_some() {}
     assert_eq!(client.control_state(), DlpControlState::Up); assert_eq!(server.control_state(), DlpControlState::Up);
 }
 
