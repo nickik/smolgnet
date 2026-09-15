@@ -38,13 +38,16 @@ GDP/DLP <- port 0 <- [            ] <- port 1 <- GDP/DLP
 - [x] Validate unique router link-local addresses.
 - [x] Validate connected prefix/router-address pairs.
 - [x] Validate static route egress ports.
-- [x] Reject duplicate forwarding prefixes.
-- [x] Validate optional next-hop addresses.
-- [x] Protect bootstrap and router-owned `/64` destinations.
+- [x] Reject duplicate static prefixes and exact connected/static prefix conflicts.
+- [x] Accept a valid link-local next hop.
+- [x] Reject global, bootstrap, and router-owned next hops.
+- [x] Protect bootstrap and router-owned `/64` destinations from static capture.
+- [x] Reject invalid physical ingress ports.
 - [x] Test port 0 -> port 1 forwarding.
 - [x] Test port 1 -> port 0 forwarding.
 - [x] Test destination preservation and one Hop-Limit decrement.
 - [x] Test default route and more-specific route selection.
+- [x] Test short-prefix behavior at `/1`.
 - [x] Test the split LPM boundary at `/32` and `/33`.
 - [x] Test long-prefix boundary behavior at `/63` and `/64`.
 - [x] Test router-local/bootstrap CPU punt.
