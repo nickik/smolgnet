@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use smolgnet::*;
 
 const ROUTERS: usize = 4;
-const NODE_PREFIX: u64 = 0x7000_0000_0000_0000;
+const NODE_PREFIX_BASE: u64 = 0x7000_0000_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Resource {
@@ -18,12 +18,16 @@ struct Flow {
     wants: Resource,
 }
 
+fn node_network(index: usize) -> GdpAddress {
+    GdpAddress(NODE_PREFIX_BASE | ((index as u64 + 1) << 16))
+}
+
 fn node_address(index: usize) -> GdpAddress {
-    GdpAddress(NODE_PREFIX | ((index as u64 + 1) << 16) | 1)
+    GdpAddress(node_network(index).0 | 1)
 }
 
 fn node_prefix(index: usize) -> GdpPrefix {
-    GdpPrefix::new(node_address(index), 64).unwrap()
+    GdpPrefix::new(node_network(index), 48).unwrap()
 }
 
 fn router(index: usize, policy: RouterVc0Policy) -> CycleAwareRouter {
