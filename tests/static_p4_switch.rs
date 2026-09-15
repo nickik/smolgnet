@@ -50,7 +50,10 @@ fn invalid_ports_and_link_local_nodes_are_rejected() {
     );
     assert_eq!(
         switch
-            .process(8, packet(0x1200_0000_0000_0001, 0x9900_0000_0000_0001, 8))
+            .process(
+                8,
+                packet(0x1200_0000_0000_0001, 0x9900_0000_0000_0001, 8)
+            )
             .unwrap_err(),
         Error::InvalidField
     );
@@ -64,7 +67,10 @@ fn forwards_zero_to_seven_without_modifying_gdp() {
     let original = packet(destination.0, 0x9900_0000_0000_0001, 9);
 
     match switch.process(0, original.clone()).unwrap() {
-        SwitchDisposition::Forward { egress_port, packet } => {
+        SwitchDisposition::Forward {
+            egress_port,
+            packet,
+        } => {
             assert_eq!(egress_port, 7);
             assert_eq!(packet, original);
             assert_eq!(packet.header.hop_limit, 9);
@@ -94,10 +100,16 @@ fn unknown_destination_and_hairpin_are_dropped() {
     let mut switch = StaticP4Switch::new();
     let destination = GdpAddress(0x3300_0000_0000_0001);
     let original = packet(destination.0, 0x9900_0000_0000_0001, 8);
-    assert_eq!(switch.process(0, original.clone()).unwrap(), SwitchDisposition::Drop);
+    assert_eq!(
+        switch.process(0, original.clone()).unwrap(),
+        SwitchDisposition::Drop
+    );
 
     switch.register_node(destination, 0).unwrap();
-    assert_eq!(switch.process(0, original).unwrap(), SwitchDisposition::Drop);
+    assert_eq!(
+        switch.process(0, original).unwrap(),
+        SwitchDisposition::Drop
+    );
 }
 
 #[test]
@@ -111,7 +123,10 @@ fn multiple_nodes_can_share_one_egress_port() {
     for destination in [a, b] {
         assert!(matches!(
             switch
-                .process(1, packet(destination.0, 0x9900_0000_0000_0001, 8))
+                .process(
+                    1,
+                    packet(destination.0, 0x9900_0000_0000_0001, 8)
+                )
                 .unwrap(),
             SwitchDisposition::Forward { egress_port: 6, .. }
         ));
