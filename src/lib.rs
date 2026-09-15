@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod bounded_gts;
+pub mod dynamic_routing;
 pub mod error;
 pub mod routing;
 pub mod socket;
@@ -56,6 +57,7 @@ pub use bounded_gts::{
     Retransmit, RxDisposition, RxMeta, SendInfo, StreamState as BoundedStreamState,
     TunnelRole as BoundedTunnelRole, TunnelState as BoundedTunnelState, TxMeta,
 };
+pub use dynamic_routing::{LinkId, RouteMetric, RouteOrigin, RouterId};
 pub use error::{Error, Result};
 pub use routing::{GdpPrefix, PrefixLengthError, Route, RouteTable, RouteTableFull};
 pub use socket::{SocketHandle, SocketSet, SocketStorage};
@@ -111,6 +113,11 @@ pub use trace::{TraceDirection, TraceEvent, TraceSink, Tracer};
 pub use wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
     Advertise, CreditGrant, CreditRequest, DiscoveryScope, GctlMessage, GctlType, ServiceType,
+};
+#[cfg(feature = "alloc")]
+pub use wire::gctl_routing::{
+    RouteAdvertise, RouterHello, RoutingGctlBody, RoutingGctlMessage, GCTL_ROUTE_ADVERTISE,
+    GCTL_ROUTER_HELLO, GCTL_ROUTER_HELLO_ACK,
 };
 #[cfg(feature = "alloc")]
 pub use wire::gdp::GdpPacket;
