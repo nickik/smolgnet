@@ -57,6 +57,11 @@ path = "tests/dynamic_routing_stage1.rs"
 required-features = ["std", "alloc"]
 
 [[test]]
+name = "dynamic_routing_stage2"
+path = "tests/dynamic_routing_stage2.rs"
+required-features = ["std", "alloc"]
+
+[[test]]
 name = "link"
 path = "tests/link.rs"
 required-features = ["alloc"]
