@@ -2,87 +2,89 @@
 
 Branch: `dynamic-topology-routing`
 
-Goal: replace primarily static cross-router forwarding with GCTL-learned topology, an explicit RIB/FIB split, and deterministic shortest-path routing. The forwarding pipeline remains `StaticP4Router -> RouterEgressScheduler -> DlpLink`; topology discovery and route computation are control-plane functions.
+The first dynamic-routing revision stays deliberately small. It uses GCTL neighbor discovery plus forward route exchange. It does not build a topology database or run SPF/Dijkstra.
 
 ## Stage 1 — Spec + data model
 
-- [ ] Track the matching GNet spec branch `dynamic-topology-routing` and do not invent wire semantics only in this repository.
-- [ ] Add `RouterId` as a stable 64-bit router identity independent of interface GDP addresses.
-- [ ] Add `LinkId` for router-to-router adjacency identification.
-- [ ] Define route origin/source explicitly: `Connected`, `Learned`, `Static`, and reserved `Escape`.
-- [ ] Define route administrative preference independently from route origin.
-- [ ] Define GCTL router-adjacency messages (`ROUTER_HELLO` / acknowledgement or equivalent final spec names).
-- [ ] Define topology advertisement wire model: origin router, sequence, lifetime/age, links, connected prefixes, metric/cost, capabilities as required.
-- [ ] Define acceptance rules for topology advertisements: newer sequence wins, duplicates are idempotent, stale/expired entries are removed.
-- [ ] Add Rust wire types/codecs and round-trip/malformed-input tests matching the spec exactly.
-- [ ] Add production topology/routing data types without coupling route computation to P4.
+- [x] Define `RouterId` as a non-zero random 64-bit identity independent of GDP interface addresses.
+- [x] Generate RouterId from the operating system random source under `std`; persistence is the router application's responsibility.
+- [x] Define non-zero 64-bit `LinkId`.
+- [x] Define `RouteOrigin`: `Connected`, `Learned`, `Static`, reserved `Escape`.
+- [x] Keep administrative preference separate from route metric.
+- [x] Define a simple unsigned 32-bit route metric with default link metric `100`.
+- [x] Reserve GCTL `ROUTER_HELLO = 0x40`.
+- [x] Reserve GCTL `ROUTER_HELLO_ACK = 0x41`.
+- [x] Reserve GCTL `ROUTE_ADVERTISE = 0x42`.
+- [x] Define exact 32-byte wire formats for all three messages.
+- [x] Implement Rust wire codecs matching the spec.
+- [x] Add exact-wire, round-trip, random-ID, and malformed-input tests.
 
 Completion gate:
 
-- [ ] Spec wire layout is written first and implementation matches it byte-for-byte.
-- [ ] Router/link IDs, route origins, metrics, and topology advertisements have unit tests.
-- [ ] Existing static router/DLP/GCTL tests remain green.
+- [x] GNet spec branch describes the same fields and byte layout as the Rust implementation.
+- [ ] Stage 1 CI passes on the exact branch head.
+- [ ] Existing GCTL/wire/library tests remain green.
 
-## Stage 2 — Adjacency + topology database
+## Stage 2 — Neighbor discovery
 
-- [ ] Add router-neighbor state with at least `Down`, discovery/seen, and bidirectionally `Up` states.
-- [ ] Exchange router identity, link identity, local reachable prefix information, metric, and hold/liveness information over GCTL.
-- [ ] Learn a router-to-router neighbor from GCTL rather than preconstructing the neighbor relationship in the test.
-- [ ] Build a topology database keyed by `RouterId`.
-- [ ] Store each origin router's latest accepted sequence, connected prefixes, links, and expiry state.
-- [ ] Flood accepted topology advertisements to other router adjacencies except the ingress adjacency.
-- [ ] Prevent advertisement loops with origin+sequence duplicate suppression.
-- [ ] Withdraw/expire topology state when the originating adjacency or advertisement lifetime expires.
-- [ ] Add a two-router integration test: each router learns the other router and its directly connected prefixes.
+- [ ] Use only `DOWN -> UP` initially.
+- [ ] Send `ROUTER_HELLO` on router links.
+- [ ] Reply with `ROUTER_HELLO_ACK`.
+- [ ] Store neighbor RouterId, local port, local/remote LinkId, neighbor GDP address, metric, and hold timer.
+- [ ] Expire neighbor state after the negotiated/simple hold timeout.
+- [ ] Two-router test proves A discovers B and B discovers A without preconstructed neighbor state.
 
 Completion gate:
 
-- [ ] Two routers start knowing only their own connected interfaces and configured identity/link settings.
-- [ ] After GCTL exchange, both topology databases contain both routers and their connected prefixes.
-- [ ] No static cross-router route is required to populate the topology database.
+- [ ] Two routers know only their own local identity/link configuration at startup.
+- [ ] Both reach `UP` using GCTL only.
 
-## Stage 3 — SPF + RIB/FIB
+## Stage 3 — Forward route exchange + RIB/FIB
 
-- [ ] Add an explicit RIB capable of holding competing connected, learned, and static routes.
-- [ ] Add deterministic route selection using administrative preference first and path cost where appropriate.
-- [ ] Implement shortest-path calculation over the topology database (initially deterministic single-next-hop SPF/Dijkstra).
-- [ ] Convert learned topology prefixes into learned RIB routes with next-hop router and egress port.
-- [ ] Add an explicit FIB containing only selected forwarding entries.
-- [ ] Provide a control-plane update path from FIB changes into `StaticP4Router` forwarding-table state.
-- [ ] Preserve static-route support as an override/fallback source rather than deleting it.
-- [ ] Reserve `Escape` as a distinct future route class; do not implement VC0 escape routing in this stage.
-- [ ] Replace manually configured cross-router routes in `router_to_router_simulation.rs` with learned routes.
+- [ ] Router advertises connected routes with `ROUTE_ADVERTISE`.
+- [ ] Router forwards learned routes to other neighbors.
+- [ ] Add local link metric when forwarding a learned route.
+- [ ] Apply split horizon: never advertise a learned route back to the neighbor it came from.
+- [ ] Store `learned_from: RouterId` for learned routes.
+- [ ] Prefer lower metric among equivalent learned routes.
+- [ ] Tie-break equal learned metrics deterministically by RouterId.
+- [ ] Add a RIB that can hold connected, learned, and static alternatives.
+- [ ] Generate a selected FIB from the RIB.
+- [ ] Install FIB changes into the P4 forwarding table.
+- [ ] Keep static routes available as overrides/fallbacks.
+- [ ] Reserve `Escape` but do not implement escape routing yet.
+- [ ] Remove manually configured cross-router routes from `router_to_router_simulation.rs`.
 
 Completion gate:
 
-- [ ] Existing router-to-router topology passes with only connected interfaces plus GCTL topology exchange configured.
-- [ ] Learned routes appear in the RIB, selected routes appear in the FIB, and P4 forwards from that FIB.
-- [ ] Static-vs-learned precedence is covered by tests.
-- [ ] Router egress scheduling and DLP VC assignment continue to work unchanged.
+- [ ] Existing router-to-router simulation passes using learned cross-router routes.
+- [ ] No topology database or Dijkstra is required.
+- [ ] RouterEgressScheduler and DLP VC assignment remain unchanged.
 
 ## Stage 4 — Failure + reconvergence
 
-- [ ] Add a topology with at least two possible paths between source and destination networks.
-- [ ] Establish all adjacencies and prove the deterministic preferred path before failure.
-- [ ] Remove/fail one router-to-router link.
-- [ ] Detect adjacency loss via explicit link-down indication and/or hold timeout according to the spec.
-- [ ] Originate/flood the changed topology state.
-- [ ] Remove or invalidate stale topology entries/routes.
-- [ ] Re-run SPF and update RIB/FIB.
-- [ ] Prove traffic reconverges onto the alternate path without manually installing a replacement route.
-- [ ] Restore the link and prove deterministic convergence back to the preferred topology when appropriate.
+- [ ] Define a simple `ROUTE_WITHDRAW` wire message before implementing failure handling.
+- [ ] Build a topology with two possible paths.
+- [ ] Fail one router-to-router link.
+- [ ] Neighbor hold timeout marks the adjacency down.
+- [ ] Remove routes learned through that neighbor.
+- [ ] Propagate withdrawal.
+- [ ] Re-select RIB/FIB using the alternate learned route.
+- [ ] Prove traffic succeeds over the alternate path.
+- [ ] Restore the link and prove deterministic convergence again.
 
 Completion gate:
 
-- [ ] Failure test proves: adjacency down -> topology update -> SPF recompute -> RIB/FIB replacement -> successful traffic on alternate path.
+- [ ] `neighbor down -> route removal -> withdrawal -> RIB/FIB replacement -> traffic restored` is covered end-to-end.
 - [ ] No stale next hop remains usable after withdrawal.
-- [ ] Existing P4, GCTL, scheduler, DLP, and stable-network CI remain green.
 
 ## Explicitly deferred
 
+- Link-state topology database.
+- SPF/Dijkstra.
 - ECMP and unequal-cost multipath.
 - Congestion-aware/adaptive routing.
 - Up*/down* or other deadlock-free escape topology construction.
 - VC0 escape forwarding policy beyond reserving the route class/data-model hooks.
-- Areas, route reflectors, designated-router concepts, or other large-network hierarchy.
-- Authentication/cryptographic routing security.
+- Areas or other routing hierarchy.
+- Routing authentication.
