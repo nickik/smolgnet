@@ -24,8 +24,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Check native DLP link-control implementation
         run: cargo check --lib
-      - name: Run DLP tests with bounded runtime and debug output
+      - name: Diagnose credit retry regression with divisible link window
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/dlp_link_control.rs')
+          s = p.read_text()
+          old = 'cfg(40, VcMode::Two, 40), 32).unwrap();'
+          assert s.count(old) == 2, s.count(old)
+          p.write_text(s.replace(old, 'cfg(64, VcMode::Two, 64), 32).unwrap();'))
+          PY
+          echo 'Diagnostic: credit-retry test uses a 64-flit window so 32-flit GDP/GTS frames can exhaust it exactly.'
+          timeout --signal=TERM --kill-after=2s 20s \
+            cargo test --test dlp_link_control lost_gctl_credit_request_is_retried_and_same_gts_stream_continues -- --exact --nocapture --test-threads=1
+      - name: Run remaining DLP tests with bounded runtime and debug output
         run: |
           set -o pipefail
-          timeout --signal=TERM --kill-after=5s 90s \
+          timeout --signal=TERM --kill-after=5s 60s \
             cargo test --test dlp_link_control -- --nocapture --test-threads=1
