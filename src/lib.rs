@@ -29,6 +29,8 @@ pub mod p4_gdp;
 pub mod p4_gts;
 #[cfg(feature = "p4-router")]
 pub mod static_router;
+#[cfg(feature = "p4-router")]
+pub mod cycle_router;
 #[cfg(feature = "p4-switch")]
 pub mod static_switch;
 #[cfg(feature = "alloc")]
@@ -87,6 +89,8 @@ pub use static_router::{
     FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
     RouterPortConfig, RouterPortId, RouterStartupConfig, StaticP4Router, StaticRouteConfig,
 };
+#[cfg(feature = "p4-router")]
+pub use cycle_router::{CycleAwareRouter, RouterVc0Policy};
 #[cfg(feature = "p4-switch")]
 pub use static_switch::{
     SWITCH_PORT_COUNT, StaticP4Switch, SwitchDisposition, SwitchPortId,
