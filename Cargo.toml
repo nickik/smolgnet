@@ -16,24 +16,12 @@ default = ["std", "alloc"]
 std = ["alloc"]
 alloc = []
 async = []
-# Shared hosted runtime required by the pinned x4c Rust backend. This is kept
-# separate so GDP and GTS can independently select P4 without duplicating deps.
 p4-runtime = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
-# Use the x4c-generated P4 parser for normal GDP header decoding.
 p4-gdp = ["p4-runtime"]
-# Select the P4 backend and additionally decode every supported GDP header with
-# the handwritten implementation, failing if the two interpretations differ.
 p4-gdp-compare = ["p4-gdp"]
-# Use the x4c-generated lower GTS wire codec for receive parsing and transmit
-# deparsing. Stream-profile interpretation, payload rules, CRC and all
-# transport/session state remain in common Rust code.
 p4-gts = ["p4-runtime"]
-# Run every GTS packet through both lower wire codecs and reject any RX or TX
-# difference before/after the common GTS semantic layers.
 p4-gts-compare = ["p4-gts"]
-# Production-style static GDP router: Rust management plane plus x4c/P4 fast path.
 p4-router = ["p4-runtime"]
-# Fixed eight-port GS3 switch; P4 fast path is added behind this feature.
 p4-switch = ["p4-runtime"]
 
 [dependencies]
@@ -55,6 +43,11 @@ path = "tests/heapless_api.rs"
 [[test]]
 name = "wire"
 path = "tests/wire.rs"
+required-features = ["alloc"]
+
+[[test]]
+name = "gctl_node_discovery"
+path = "tests/gctl_node_discovery.rs"
 required-features = ["alloc"]
 
 [[test]]
