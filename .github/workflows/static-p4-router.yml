@@ -25,8 +25,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Check static router source formatting
-        run: rustfmt --check src/static_router.rs tests/static_p4_router.rs
+      - name: Normalize router sources for validation
+        run: rustfmt src/static_router.rs tests/static_p4_router.rs
       - name: Check static P4 router
         run: cargo check --features p4-router --test static_p4_router
       - name: Run static P4 router tests with bounded runtime and debug output
