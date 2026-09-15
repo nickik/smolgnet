@@ -75,13 +75,8 @@ fn hold_timeout_reprograms_p4_to_alternate_and_removes_stale_route() {
     let port0 = RouterPortConfig::new(0, GdpAddress(0xfe80_0000_0000_0100));
     let port1 = RouterPortConfig::new(1, GdpAddress(0xfe80_0000_0000_0101));
     let mut router = DynamicP4Router::new(local, vec![port0, port1], vec![]).unwrap();
-    let mut preferred_adjacency = RouterAdjacency::new(
-        local,
-        LinkId::new(0x100).unwrap(),
-        RouteMetric(100),
-        1_000,
-    )
-    .unwrap();
+    let mut preferred_adjacency =
+        RouterAdjacency::new(local, LinkId::new(0x100).unwrap(), RouteMetric(100), 1_000).unwrap();
     preferred_adjacency
         .receive(
             Instant::ZERO,
