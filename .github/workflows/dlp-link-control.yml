@@ -23,7 +23,22 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Normalize DLP sources once
+        if: github.event_name == 'pull_request'
+        run: |
+          rustfmt src/dlp_control.rs tests/dlp_link_control.rs
+          if ! git diff --quiet -- src/dlp_control.rs tests/dlp_link_control.rs; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/dlp_control.rs tests/dlp_link_control.rs
+            git commit -m "Format DLP link-control sources"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - name: Check native DLP link-control implementation
         run: cargo check --lib
       - name: Run DLP tests with bounded runtime and debug output
