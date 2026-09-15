@@ -23,9 +23,31 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Strengthen credit-retry payload verification once
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/dlp_link_control.rs')
+          s = p.read_text()
+          old = '''    while server.recv(sh, 0).unwrap().is_some() {}\n    assert_eq!(client.control_state(), DlpControlState::Up);\n'''
+          new = '''    let mut saw_first = false;\n    let mut saw_second = false;\n    while let Some(message) = server.recv(sh, 0).unwrap() {\n        saw_first |= message == b"first packet";\n        saw_second |= message == b"second packet";\n    }\n    assert!(saw_first, "first packet did not arrive after credit recovery");\n    assert!(saw_second, "second packet did not arrive after credit recovery");\n    assert_eq!(client.control_state(), DlpControlState::Up);\n'''
+          if old in s:
+              p.write_text(s.replace(old, new, 1))
+          PY
+          rustfmt tests/dlp_link_control.rs
+          if ! git diff --quiet -- tests/dlp_link_control.rs; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add tests/dlp_link_control.rs
+            git commit -m "Verify payload delivery after DLP credit recovery"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - name: Check DLP source formatting
         run: rustfmt --check src/dlp_control.rs tests/dlp_link_control.rs
       - name: Check native DLP link-control implementation
