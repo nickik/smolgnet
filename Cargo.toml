@@ -139,3 +139,8 @@ required-features = ["p4-router"]
 name = "static_p4_switch"
 path = "tests/static_p4_switch.rs"
 required-features = ["p4-switch"]
+
+[[test]]
+name = "network_simulation"
+path = "tests/network_simulation.rs"
+required-features = ["p4-router", "p4-switch"]
