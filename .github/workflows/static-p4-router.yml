@@ -9,6 +9,7 @@ on:
       - 'p4-static-router/**'
       - 'tests/static_p4_router.rs'
       - 'docs/STATIC_P4_ROUTER_TODO.md'
+      - 'docs/ADVANCED_ROUTER_DESIGN.md'
       - 'Cargo.toml'
       - '.github/workflows/static-p4-router.yml'
   workflow_dispatch:
