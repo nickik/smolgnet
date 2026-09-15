@@ -1,0 +1,38 @@
+name: Stable Network Simulation
+
+on:
+  pull_request:
+    paths:
+      - 'src/static_router.rs'
+      - 'src/static_switch.rs'
+      - 'p4-common/**'
+      - 'p4-static-router/**'
+      - 'p4-static-switch/**'
+      - 'src/wire/gctl.rs'
+      - 'tests/network_simulation.rs'
+      - 'Cargo.toml'
+      - '.github/workflows/network-simulation.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check simulation source formatting
+        run: rustfmt --check src/static_switch.rs tests/network_simulation.rs
+      - name: Check simulation build
+        run: cargo check --features p4-router,p4-switch --test network_simulation
+      - name: Run stable topology scenarios
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 120s \
+            cargo test --features p4-router,p4-switch --test network_simulation -- --nocapture --test-threads=1
