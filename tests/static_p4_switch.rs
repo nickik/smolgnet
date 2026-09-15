@@ -5,13 +5,12 @@ use smolgnet::{StaticP4Switch, SwitchDisposition, SWITCH_PORT_COUNT};
 fn packet(destination: u64, source: u64, hop: u8) -> GdpPacket {
     let header = GdpHeader::global(
         GdpType::Gts,
-        SizeClass::B64,
+        SizeClass::Ctrl32,
         hop,
-        GdpAddress(destination),
         GdpAddress(source),
-    )
-    .unwrap();
-    GdpPacket::new(header, vec![0x5a; 64]).unwrap()
+        GdpAddress(destination),
+    );
+    GdpPacket::new(header, vec![0x5a; 32]).unwrap()
 }
 
 #[test]
