@@ -416,7 +416,7 @@ impl DlpManagedEndpoint {
         self.peer_generation
     }
 
-    pub const fn control_pending(&self) -> bool {
+    pub fn control_pending(&self) -> bool {
         !self.control_tx.is_empty()
     }
 
