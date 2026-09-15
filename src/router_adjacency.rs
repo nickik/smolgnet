@@ -87,7 +87,9 @@ impl RouterAdjacency {
                 self.accept_peer(now, peer)?;
                 Ok(None)
             }
-            RoutingGctlBody::RouteAdvertise(_) => Err(Error::Unsupported),
+            RoutingGctlBody::RouteAdvertise(_) | RoutingGctlBody::RouteWithdraw(_) => {
+                Err(Error::Unsupported)
+            }
         }
     }
 
