@@ -81,7 +81,10 @@ impl RouterRib {
     ) -> Result<()> {
         if from == self.local_router_id
             || advertisement.advertiser != from
-            || matches!(advertisement.origin, RouteOrigin::Static | RouteOrigin::Escape)
+            || matches!(
+                advertisement.origin,
+                RouteOrigin::Static | RouteOrigin::Escape
+            )
         {
             return Err(Error::InvalidField);
         }
