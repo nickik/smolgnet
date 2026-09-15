@@ -18,10 +18,14 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Check native DLP link-control implementation
         run: cargo check --lib
-      - name: Run native DLP link-control conformance and GTS integration tests
-        run: cargo test --test dlp_link_control
+      - name: Run DLP tests with bounded runtime and debug output
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=5s 90s \
+            cargo test --test dlp_link_control -- --nocapture --test-threads=1
