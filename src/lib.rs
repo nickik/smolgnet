@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod bounded_gts;
+pub mod dynamic_routing;
 pub mod error;
 pub mod routing;
 pub mod socket;
@@ -25,12 +26,18 @@ pub mod egress_scheduler;
 pub mod endpoint;
 #[cfg(feature = "alloc")]
 pub mod gts;
+#[cfg(feature = "alloc")]
+pub mod router_adjacency;
+#[cfg(feature = "alloc")]
+pub mod router_rib;
 #[cfg(feature = "p4-gdp")]
 pub mod p4_gdp;
 #[cfg(feature = "p4-gts")]
 pub mod p4_gts;
 #[cfg(feature = "p4-router")]
 pub mod static_router;
+#[cfg(feature = "p4-router")]
+pub mod dynamic_router;
 #[cfg(feature = "p4-router")]
 pub mod cycle_router;
 #[cfg(feature = "p4-switch")]
@@ -42,10 +49,6 @@ pub mod runtime;
 #[cfg(feature = "alloc")]
 pub mod trace;
 
-// Transitional crate-private compatibility name for the endpoint core while
-// the DLP implementation lives in the explicit `dlp` module. This is not part
-// of the public API and can disappear once the endpoint core is mechanically
-// updated to import `crate::dlp` directly.
 #[cfg(feature = "alloc")]
 mod link {
     pub(crate) use crate::dlp::*;
@@ -56,6 +59,7 @@ pub use bounded_gts::{
     Retransmit, RxDisposition, RxMeta, SendInfo, StreamState as BoundedStreamState,
     TunnelRole as BoundedTunnelRole, TunnelState as BoundedTunnelState, TxMeta,
 };
+pub use dynamic_routing::{LinkId, RouteMetric, RouteOrigin, RouterId};
 pub use error::{Error, Result};
 pub use routing::{GdpPrefix, PrefixLengthError, Route, RouteTable, RouteTableFull};
 pub use socket::{SocketHandle, SocketSet, SocketStorage};
@@ -88,11 +92,17 @@ pub use endpoint::{
 };
 #[cfg(feature = "alloc")]
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
+#[cfg(feature = "alloc")]
+pub use router_adjacency::{NeighborState, RouterAdjacency, RouterNeighbor};
+#[cfg(feature = "alloc")]
+pub use router_rib::{RibRoute, RouteUpdate, RouterRib, RoutingPortId, SelectedRoute};
 #[cfg(feature = "p4-router")]
 pub use static_router::{
     FibEntry, FibOrigin, ROUTER_BOOTSTRAP_ADDRESS, ROUTER_PORT_COUNT, RouterDisposition,
     RouterPortConfig, RouterPortId, RouterStartupConfig, StaticP4Router, StaticRouteConfig,
 };
+#[cfg(feature = "p4-router")]
+pub use dynamic_router::DynamicP4Router;
 #[cfg(feature = "p4-router")]
 pub use cycle_router::{CycleAwareRouter, RouterVc0Policy};
 #[cfg(feature = "p4-switch")]
@@ -111,6 +121,11 @@ pub use trace::{TraceDirection, TraceEvent, TraceSink, Tracer};
 pub use wire::gctl::{
     address_matches_prefix, normalize_prefix, AddressAck, AddressClaim, AddressNak, AddressOffer,
     Advertise, CreditGrant, CreditRequest, DiscoveryScope, GctlMessage, GctlType, ServiceType,
+};
+#[cfg(feature = "alloc")]
+pub use wire::gctl_routing::{
+    RouteAdvertise, RouteWithdraw, RouterHello, RoutingGctlBody, RoutingGctlMessage,
+    GCTL_ROUTE_ADVERTISE, GCTL_ROUTE_WITHDRAW, GCTL_ROUTER_HELLO, GCTL_ROUTER_HELLO_ACK,
 };
 #[cfg(feature = "alloc")]
 pub use wire::gdp::GdpPacket;

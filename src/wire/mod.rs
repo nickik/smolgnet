@@ -12,3 +12,5 @@ pub(crate) mod gts_tx;
 
 #[cfg(feature = "alloc")]
 pub mod gctl;
+#[cfg(feature = "alloc")]
+pub mod gctl_routing;
