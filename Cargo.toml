@@ -13,7 +13,7 @@ autobenches = false
 
 [features]
 default = ["std", "alloc"]
-std = ["alloc"]
+std = ["alloc", "dep:getrandom"]
 alloc = []
 async = []
 p4-runtime = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
@@ -25,6 +25,7 @@ p4-router = ["p4-runtime"]
 p4-switch = ["p4-runtime"]
 
 [dependencies]
+getrandom = { version = "0.3.4", optional = true }
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
 p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
 bitvec = { version = "1.0", optional = true }
@@ -49,6 +50,11 @@ required-features = ["alloc"]
 name = "gctl_node_discovery"
 path = "tests/gctl_node_discovery.rs"
 required-features = ["alloc"]
+
+[[test]]
+name = "dynamic_routing_stage1"
+path = "tests/dynamic_routing_stage1.rs"
+required-features = ["std", "alloc"]
 
 [[test]]
 name = "link"
