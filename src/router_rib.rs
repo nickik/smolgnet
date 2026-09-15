@@ -1,10 +1,10 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use crate::dynamic_routing::{RouteMetric, RouteOrigin, RouterId};
 use crate::error::{Error, Result};
 use crate::routing::GdpPrefix;
-use crate::wire::gctl_routing::RouteAdvertise;
+use crate::wire::gctl_routing::{RouteAdvertise, RouteWithdraw};
 
 pub type RoutingPortId = u16;
 
@@ -24,6 +24,12 @@ pub struct SelectedRoute {
     pub origin: RouteOrigin,
     pub metric: RouteMetric,
     pub learned_from: Option<RouterId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteUpdate {
+    Advertise(RouteAdvertise),
+    Withdraw(RouteWithdraw),
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +115,33 @@ impl RouterRib {
         Ok(())
     }
 
+    pub fn receive_withdrawal(&mut self, from: RouterId, withdrawal: RouteWithdraw) -> Result<bool> {
+        if from == self.local_router_id || withdrawal.advertiser != from {
+            return Err(Error::InvalidField);
+        }
+
+        let before = self.routes.len();
+        self.routes.retain(|route| {
+            !(route.prefix == withdrawal.prefix
+                && route.origin == RouteOrigin::Learned
+                && route.learned_from == Some(from))
+        });
+        Ok(self.routes.len() != before)
+    }
+
+    pub fn remove_learned_from(&mut self, neighbor: RouterId) -> Vec<GdpPrefix> {
+        let mut changed = BTreeSet::new();
+        self.routes.retain(|route| {
+            let remove = route.origin == RouteOrigin::Learned
+                && route.learned_from == Some(neighbor);
+            if remove {
+                changed.insert(route.prefix);
+            }
+            !remove
+        });
+        changed.into_iter().collect()
+    }
+
     pub fn advertisements_for(
         &self,
         neighbor: RouterId,
@@ -116,16 +149,28 @@ impl RouterRib {
     ) -> Vec<RouteAdvertise> {
         self.selected_routes()
             .into_iter()
-            .filter(|route| match route.origin {
-                RouteOrigin::Connected => true,
-                RouteOrigin::Learned => route.learned_from != Some(neighbor),
-                RouteOrigin::Static | RouteOrigin::Escape => false,
-            })
-            .map(|route| RouteAdvertise {
-                advertiser: self.local_router_id,
-                prefix: route.prefix,
-                origin: route.origin,
-                metric: route.metric.saturating_add(outgoing_metric),
+            .filter(|route| route_is_advertisable_to(*route, neighbor))
+            .map(|route| self.advertisement(route, outgoing_metric))
+            .collect()
+    }
+
+    pub fn updates_for(
+        &self,
+        neighbor: RouterId,
+        outgoing_metric: RouteMetric,
+        changed_prefixes: &[GdpPrefix],
+    ) -> Vec<RouteUpdate> {
+        let unique: BTreeSet<GdpPrefix> = changed_prefixes.iter().copied().collect();
+        unique
+            .into_iter()
+            .map(|prefix| match self.selected_for_prefix(prefix) {
+                Some(route) if route_is_advertisable_to(route, neighbor) => {
+                    RouteUpdate::Advertise(self.advertisement(route, outgoing_metric))
+                }
+                _ => RouteUpdate::Withdraw(RouteWithdraw {
+                    advertiser: self.local_router_id,
+                    prefix,
+                }),
             })
             .collect()
     }
@@ -144,16 +189,7 @@ impl RouterRib {
             }
         }
 
-        winners
-            .into_values()
-            .map(|route| SelectedRoute {
-                prefix: route.prefix,
-                egress_port: route.egress_port,
-                origin: route.origin,
-                metric: route.metric,
-                learned_from: route.learned_from,
-            })
-            .collect()
+        winners.into_values().map(SelectedRoute::from).collect()
     }
 
     pub fn learned_fib(&self) -> Vec<SelectedRoute> {
@@ -161,6 +197,34 @@ impl RouterRib {
             .into_iter()
             .filter(|route| route.origin == RouteOrigin::Learned)
             .collect()
+    }
+
+    fn selected_for_prefix(&self, prefix: GdpPrefix) -> Option<SelectedRoute> {
+        self.routes
+            .iter()
+            .copied()
+            .filter(|route| route.prefix == prefix)
+            .reduce(|current, candidate| {
+                if route_better(candidate, current) {
+                    candidate
+                } else {
+                    current
+                }
+            })
+            .map(SelectedRoute::from)
+    }
+
+    fn advertisement(
+        &self,
+        route: SelectedRoute,
+        outgoing_metric: RouteMetric,
+    ) -> RouteAdvertise {
+        RouteAdvertise {
+            advertiser: self.local_router_id,
+            prefix: route.prefix,
+            origin: route.origin,
+            metric: route.metric.saturating_add(outgoing_metric),
+        }
     }
 
     fn upsert_local(&mut self, route: RibRoute) {
@@ -173,6 +237,26 @@ impl RouterRib {
         } else {
             self.routes.push(route);
         }
+    }
+}
+
+impl From<RibRoute> for SelectedRoute {
+    fn from(route: RibRoute) -> Self {
+        Self {
+            prefix: route.prefix,
+            egress_port: route.egress_port,
+            origin: route.origin,
+            metric: route.metric,
+            learned_from: route.learned_from,
+        }
+    }
+}
+
+fn route_is_advertisable_to(route: SelectedRoute, neighbor: RouterId) -> bool {
+    match route.origin {
+        RouteOrigin::Connected => true,
+        RouteOrigin::Learned => route.learned_from != Some(neighbor),
+        RouteOrigin::Static | RouteOrigin::Escape => false,
     }
 }
 
