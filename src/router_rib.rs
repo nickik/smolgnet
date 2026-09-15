@@ -115,7 +115,11 @@ impl RouterRib {
         Ok(())
     }
 
-    pub fn receive_withdrawal(&mut self, from: RouterId, withdrawal: RouteWithdraw) -> Result<bool> {
+    pub fn receive_withdrawal(
+        &mut self,
+        from: RouterId,
+        withdrawal: RouteWithdraw,
+    ) -> Result<bool> {
         if from == self.local_router_id || withdrawal.advertiser != from {
             return Err(Error::InvalidField);
         }
@@ -132,8 +136,8 @@ impl RouterRib {
     pub fn remove_learned_from(&mut self, neighbor: RouterId) -> Vec<GdpPrefix> {
         let mut changed = BTreeSet::new();
         self.routes.retain(|route| {
-            let remove = route.origin == RouteOrigin::Learned
-                && route.learned_from == Some(neighbor);
+            let remove =
+                route.origin == RouteOrigin::Learned && route.learned_from == Some(neighbor);
             if remove {
                 changed.insert(route.prefix);
             }
@@ -214,11 +218,7 @@ impl RouterRib {
             .map(SelectedRoute::from)
     }
 
-    fn advertisement(
-        &self,
-        route: SelectedRoute,
-        outgoing_metric: RouteMetric,
-    ) -> RouteAdvertise {
+    fn advertisement(&self, route: SelectedRoute, outgoing_metric: RouteMetric) -> RouteAdvertise {
         RouteAdvertise {
             advertiser: self.local_router_id,
             prefix: route.prefix,
