@@ -153,8 +153,83 @@ pub enum ReceiveError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::iface::{Config, Interface, SocketHandle, SocketSet};
+    use crate::phy::{Loopback, Medium};
     use crate::socket::udp::PacketBuffer;
-    use crate::wire::{IpEndpoint, Ipv4Address};
+    use crate::time::Instant;
+    use crate::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address};
+    use smolgnet_native::wire::gts::GtsContext;
+    use smolgnet_native::{Direction, GdpAddress, GtsPacket, GtsStream, SizeClass, StreamProfile};
+
+    fn udp_loopback() -> (
+        Interface,
+        Loopback,
+        SocketSet<'static>,
+        SocketHandle,
+        SocketHandle,
+    ) {
+        let mut device = Loopback::new(Medium::Ip);
+        let mut iface =
+            Interface::new(Config::new(HardwareAddress::Ip), &mut device, Instant::ZERO);
+        iface.update_ip_addrs(|addrs| {
+            addrs
+                .push(IpCidr::new(IpAddress::v4(192, 0, 2, 1), 24))
+                .unwrap();
+        });
+
+        let mut sockets = SocketSet::new(vec![]);
+        let make_socket = || {
+            Socket::new(
+                PacketBuffer::new(
+                    vec![crate::socket::udp::PacketMetadata::EMPTY; 4],
+                    vec![0; 512],
+                ),
+                PacketBuffer::new(
+                    vec![crate::socket::udp::PacketMetadata::EMPTY; 4],
+                    vec![0; 512],
+                ),
+            )
+        };
+        let mut sender = make_socket();
+        sender.bind(4_000).unwrap();
+        let mut receiver = make_socket();
+        receiver.bind(4_001).unwrap();
+        let sender = sockets.add(sender);
+        let receiver = sockets.add(receiver);
+        (iface, device, sockets, sender, receiver)
+    }
+
+    fn forward_over_udp(
+        iface: &mut Interface,
+        device: &mut Loopback,
+        sockets: &mut SocketSet<'_>,
+        sender: SocketHandle,
+        receiver: SocketHandle,
+        frame: Frame<'_>,
+        port: u16,
+    ) -> Vec<u8> {
+        send(
+            sockets.get_mut::<Socket>(sender),
+            frame,
+            IpEndpoint::new(Ipv4Address::new(192, 0, 2, 1).into(), port),
+        )
+        .unwrap();
+        iface.poll(Instant::ZERO, device, sockets);
+        iface.poll(Instant::from_millis(1), device, sockets);
+        let (received, _) = receive(sockets.get_mut::<Socket>(receiver))
+            .unwrap()
+            .unwrap();
+        received.payload.to_vec()
+    }
+
+    fn gts_context(size_class: SizeClass) -> GtsContext {
+        GtsContext {
+            gdp_version: 0,
+            size_class,
+            source: GdpAddress(0x100),
+            destination: GdpAddress(0x200),
+        }
+    }
 
     #[test]
     fn preserves_a_complete_frame_and_link_metadata() {
@@ -213,5 +288,79 @@ mod tests {
         .unwrap();
 
         assert_eq!(socket.send_queue(), HEADER_LEN + b"GTS DATA".len());
+    }
+
+    #[test]
+    fn native_gts_reorders_and_acknowledges_across_smoltcp_udp() {
+        let profile = StreamProfile::reliable_variable(SizeClass::Ctrl64, Direction::Bidirectional);
+        let mut native_sender = GtsStream::new(0, profile, true, 2, 2).unwrap();
+        let mut native_receiver = GtsStream::new(0, profile, false, 2, 2).unwrap();
+        let first = native_sender
+            .send_packet(7, b"first".to_vec(), false, 0)
+            .unwrap();
+        let second = native_sender
+            .send_packet(7, b"second".to_vec(), false, 1)
+            .unwrap();
+        let (mut iface, mut device, mut sockets, udp_sender, udp_receiver) = udp_loopback();
+
+        let mut ack = None;
+        // UDP does not promise ordering, so deliver sequence 1 before 0.
+        for outgoing in [second, first] {
+            let size_class = outgoing.choose_size_class(Some(profile)).unwrap();
+            let context = gts_context(size_class);
+            let encoded = outgoing.encode(context, Some(profile)).unwrap();
+            let received = forward_over_udp(
+                &mut iface,
+                &mut device,
+                &mut sockets,
+                udp_sender,
+                udp_receiver,
+                Frame {
+                    vcid: 1,
+                    traffic: TrafficClass::Data,
+                    payload: &encoded,
+                },
+                4_001,
+            );
+            let incoming = GtsPacket::decode(&received, context, Some(profile)).unwrap();
+            native_receiver
+                .validate_incoming(size_class, &incoming)
+                .unwrap();
+            ack = native_receiver.receive_packet(&incoming).unwrap().or(ack);
+        }
+
+        let ack = ack.expect("in-order delivery creates a GTS acknowledgement");
+        let ack_size_class = ack.choose_size_class(None).unwrap();
+        let ack_context = gts_context(ack_size_class);
+        let encoded_ack = ack.encode(ack_context, None).unwrap();
+        let received_ack = forward_over_udp(
+            &mut iface,
+            &mut device,
+            &mut sockets,
+            udp_receiver,
+            udp_sender,
+            Frame {
+                vcid: 1,
+                traffic: TrafficClass::Data,
+                payload: &encoded_ack,
+            },
+            4_000,
+        );
+        let decoded_ack = GtsPacket::decode(&received_ack, ack_context, None).unwrap();
+        match decoded_ack {
+            GtsPacket::Ack {
+                ack_base,
+                receive_bitmap,
+                receive_credit,
+                ..
+            } => native_sender
+                .on_ack(ack_base, receive_bitmap, receive_credit)
+                .unwrap(),
+            other => panic!("expected GTS ACK, received {other:?}"),
+        }
+
+        assert_eq!(native_receiver.recv(), Some(b"first".to_vec()));
+        assert_eq!(native_receiver.recv(), Some(b"second".to_vec()));
+        assert!(native_sender.retransmit_due(7, 500).is_empty());
     }
 }
