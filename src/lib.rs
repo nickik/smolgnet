@@ -27,6 +27,8 @@ pub mod endpoint;
 #[cfg(feature = "alloc")]
 pub mod gts;
 #[cfg(feature = "alloc")]
+pub mod ip_compat;
+#[cfg(feature = "alloc")]
 pub mod router_adjacency;
 #[cfg(feature = "alloc")]
 pub mod router_rib;
@@ -92,6 +94,10 @@ pub use endpoint::{
 };
 #[cfg(feature = "alloc")]
 pub use gts::{GtsStream, GtsTunnel, StreamState, TunnelRole, TunnelState};
+#[cfg(feature = "alloc")]
+pub use ip_compat::{overlay_profile as ip_compat_overlay_profile, IpCompatDatagram};
+#[cfg(feature = "ip-compat")]
+pub use ip_compat::GtsIpDevice;
 #[cfg(feature = "alloc")]
 pub use router_adjacency::{NeighborState, RouterAdjacency, RouterNeighbor};
 #[cfg(feature = "alloc")]

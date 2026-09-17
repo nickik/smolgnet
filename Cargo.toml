@@ -16,6 +16,7 @@ default = ["std", "alloc"]
 std = ["alloc", "dep:getrandom"]
 alloc = []
 async = []
+ip-compat = ["alloc", "dep:smoltcp"]
 p4-runtime = ["std", "alloc", "dep:p4rs", "dep:p4-macro", "dep:bitvec", "dep:colored", "dep:num", "dep:usdt"]
 p4-gdp = ["p4-runtime"]
 p4-gdp-compare = ["p4-gdp"]
@@ -26,6 +27,7 @@ p4-switch = ["p4-runtime"]
 
 [dependencies]
 getrandom = { version = "0.3.4", optional = true }
+smoltcp = { version = "=0.14.0", default-features = false, features = ["alloc", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"], optional = true }
 p4rs = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4rs", optional = true }
 p4-macro = { git = "https://github.com/oxidecomputer/p4", rev = "4645231880ccae40efd2bc583b643944ab0f0a20", package = "p4-macro", optional = true }
 bitvec = { version = "1.0", optional = true }
