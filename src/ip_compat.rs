@@ -21,12 +21,7 @@ const GTS_DATAGRAM_OVERHEAD: usize = 12;
 
 /// GTS profile required by the IP compatibility overlay.
 pub const fn overlay_profile(max_size_class: SizeClass) -> StreamProfile {
-    StreamProfile::unreliable_variable(
-        max_size_class,
-        Direction::Bidirectional,
-        false,
-        false,
-    )
+    StreamProfile::unreliable_variable(max_size_class, Direction::Bidirectional, false, false)
 }
 
 /// Checks and emits complete IPv4 or IPv6 packets for the compatibility
@@ -96,7 +91,9 @@ mod tests {
         let profile = overlay_profile(SizeClass::Legacy1500);
         let adapter = IpCompatDatagram::new(profile).unwrap();
         let mut sender = GtsStream::new(0, profile, true, 0, 0).unwrap();
-        let packet = [0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2];
+        let packet = [
+            0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2,
+        ];
 
         let frame = adapter.send(&mut sender, 9, &packet, 0).unwrap();
         assert!(matches!(frame, GtsPacket::Datagram { sequence: None, .. }));
@@ -109,20 +106,32 @@ mod tests {
         let adapter = IpCompatDatagram::new(profile).unwrap();
         let mut sender = GtsStream::new(0, profile, true, 0, 0).unwrap();
         let mut receiver = GtsStream::new(0, profile, false, 0, 0).unwrap();
-        let lost = [0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2];
-        let delivered = [0x45, 0, 0, 20, 0, 1, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2];
+        let lost = [
+            0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2,
+        ];
+        let delivered = [
+            0x45, 0, 0, 20, 0, 1, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2,
+        ];
 
         let _dropped = adapter.send(&mut sender, 9, &lost, 0).unwrap();
         let frame = adapter.send(&mut sender, 9, &delivered, 1).unwrap();
-        receiver.validate_incoming(SizeClass::Ctrl32, &frame).unwrap();
+        receiver
+            .validate_incoming(SizeClass::Ctrl32, &frame)
+            .unwrap();
         assert_eq!(receiver.receive_packet(&frame).unwrap(), None);
-        assert_eq!(adapter.receive(receiver.recv().unwrap()).unwrap(), delivered);
+        assert_eq!(
+            adapter.receive(receiver.recv().unwrap()).unwrap(),
+            delivered
+        );
     }
 
     #[test]
     fn rejects_non_ip_and_oversize_messages() {
         let adapter = IpCompatDatagram::new(overlay_profile(SizeClass::Ctrl64)).unwrap();
-        assert_eq!(adapter.validate_ip_packet(&[0; 20]), Err(Error::InvalidField));
+        assert_eq!(
+            adapter.validate_ip_packet(&[0; 20]),
+            Err(Error::InvalidField)
+        );
         assert_eq!(
             adapter.validate_ip_packet(&[0x60; 53]),
             Err(Error::MessageTooLarge)
