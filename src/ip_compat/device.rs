@@ -68,8 +68,14 @@ impl GtsIpDevice {
 }
 
 impl Device for GtsIpDevice {
-    type RxToken<'a> = GtsIpRxToken where Self: 'a;
-    type TxToken<'a> = GtsIpTxToken<'a> where Self: 'a;
+    type RxToken<'a>
+        = GtsIpRxToken
+    where
+        Self: 'a;
+    type TxToken<'a>
+        = GtsIpTxToken<'a>
+    where
+        Self: 'a;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         self.ingress.pop_front().map(|buffer| {
@@ -145,13 +151,19 @@ mod tests {
     fn smoltcp_device_egress_becomes_one_unreliable_gts_datagram() {
         let adapter = IpCompatDatagram::new(overlay_profile(SizeClass::Legacy1500)).unwrap();
         let mut device = GtsIpDevice::new(adapter);
-        let mut stream = GtsStream::new(0, overlay_profile(SizeClass::Legacy1500), true, 0, 0).unwrap();
+        let mut stream =
+            GtsStream::new(0, overlay_profile(SizeClass::Legacy1500), true, 0, 0).unwrap();
 
         let token = device.transmit(Instant::from_millis(0)).unwrap();
         token.consume(20, |packet| {
-            packet.copy_from_slice(&[0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2]);
+            packet.copy_from_slice(&[
+                0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2,
+            ]);
         });
-        let frame = device.transmit_to_gts(&adapter, &mut stream, 7, 0).unwrap().unwrap();
+        let frame = device
+            .transmit_to_gts(&adapter, &mut stream, 7, 0)
+            .unwrap()
+            .unwrap();
         assert!(matches!(frame, GtsPacket::Datagram { sequence: None, .. }));
     }
 }
