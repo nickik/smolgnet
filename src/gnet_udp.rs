@@ -69,7 +69,10 @@ pub enum TransmitError {
 
 /// Encode `frame` into an already-sized UDP payload buffer.
 pub fn encode(frame: Frame<'_>, output: &mut [u8]) -> Result<(), TransmitError> {
-    if frame.vcid > 3 || frame.payload.len() > u16::MAX as usize || output.len() != HEADER_LEN + frame.payload.len() {
+    if frame.vcid > 3
+        || frame.payload.len() > u16::MAX as usize
+        || output.len() != HEADER_LEN + frame.payload.len()
+    {
         return Err(TransmitError::DatagramTooLarge);
     }
 
@@ -150,6 +153,8 @@ pub enum ReceiveError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::socket::udp::PacketBuffer;
+    use crate::wire::{IpEndpoint, Ipv4Address};
 
     #[test]
     fn preserves_a_complete_frame_and_link_metadata() {
@@ -175,7 +180,10 @@ mod tests {
             &mut encoded,
         )
         .unwrap();
-        assert_eq!(decode(&encoded[..HEADER_LEN]), Err(DecodeError::LengthMismatch));
+        assert_eq!(
+            decode(&encoded[..HEADER_LEN]),
+            Err(DecodeError::LengthMismatch)
+        );
         let mut with_trailer = encoded.to_vec();
         with_trailer.push(0);
         assert_eq!(decode(&with_trailer), Err(DecodeError::LengthMismatch));
@@ -184,5 +192,26 @@ mod tests {
     #[test]
     fn rejects_non_gnet_udp_traffic() {
         assert_eq!(decode(b"not a GNet payload"), Err(DecodeError::BadMagic));
+    }
+
+    #[test]
+    fn queues_one_complete_frame_on_a_real_smoltcp_udp_socket() {
+        let rx = PacketBuffer::new(vec![crate::socket::udp::PacketMetadata::EMPTY], vec![0; 64]);
+        let tx = PacketBuffer::new(vec![crate::socket::udp::PacketMetadata::EMPTY], vec![0; 64]);
+        let mut socket = Socket::new(rx, tx);
+        socket.bind(4_000).unwrap();
+
+        send(
+            &mut socket,
+            Frame {
+                vcid: 1,
+                traffic: TrafficClass::Data,
+                payload: b"GTS DATA",
+            },
+            IpEndpoint::new(Ipv4Address::new(192, 0, 2, 1).into(), 4_001),
+        )
+        .unwrap();
+
+        assert_eq!(socket.send_queue(), HEADER_LEN + b"GTS DATA".len());
     }
 }
