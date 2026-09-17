@@ -94,6 +94,14 @@ compile_error!("at least one socket needs to be enabled"); */
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+/// GNet carried over an IP/UDP underlay.
+///
+/// This is deliberately an optional underlay. It carries complete virtual-link
+/// frames between explicitly configured UDP peers; it does not make GDP use IP
+/// addressing, routing, fragmentation, or neighbour discovery.
+#[cfg(feature = "gnet-udp")]
+pub mod gnet_udp;
+
 #[cfg(not(any(
     feature = "proto-ipv4",
     feature = "proto-ipv6",
