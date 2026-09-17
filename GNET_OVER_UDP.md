@@ -20,8 +20,8 @@ protocol above it.
 - [x] Add a versioned, length-delimited UDP encapsulation and malformed-input tests.
 - [x] Bind it to the inherited smoltcp UDP socket API.
 - [x] Interoperate with the pinned native `smolgnet` GTS implementation through
-      the complete smoltcp UDP polling path: reordered reliable DATA, GTS
-      reassembly, and a returned GTS ACK.
+      the complete `smoltcp` UDP polling path: an encoded GDP/GTS packet,
+      reordered reliable DATA, GTS reassembly, and a returned GDP/GTS ACK.
 - [ ] Import/implement the GNet DLP frame endpoint above this underlay.
 - [ ] Define link-loss behaviour: either DLP acknowledgement/retransmission or
       an explicitly best-effort virtual link; credit-only DLP is insufficient.
