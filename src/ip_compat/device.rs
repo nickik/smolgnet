@@ -150,14 +150,14 @@ mod tests {
     use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
 
     fn interface(device: &mut GtsIpDevice, address: [u8; 4]) -> SmolInterface {
-        let mut interface = SmolInterface::new(
-            SmolConfig::new(HardwareAddress::Ip),
-            device,
-            Instant::ZERO,
-        );
+        let mut interface =
+            SmolInterface::new(SmolConfig::new(HardwareAddress::Ip), device, Instant::ZERO);
         interface.update_ip_addrs(|addresses| {
             addresses
-                .push(IpCidr::new(IpAddress::v4(address[0], address[1], address[2], address[3]), 24))
+                .push(IpCidr::new(
+                    IpAddress::v4(address[0], address[1], address[2], address[3]),
+                    24,
+                ))
                 .unwrap();
         });
         interface
@@ -178,10 +178,7 @@ mod tests {
         rx_stream: &mut GtsStream,
         now: u64,
     ) -> bool {
-        let Some(frame) = sender
-            .transmit_to_gts(adapter, tx_stream, 7, now)
-            .unwrap()
-        else {
+        let Some(frame) = sender.transmit_to_gts(adapter, tx_stream, 7, now).unwrap() else {
             return false;
         };
         rx_stream
@@ -243,17 +240,27 @@ mod tests {
             .get_mut::<udp::Socket>(sender_handle)
             .send_slice(b"dropped", remote)
             .unwrap();
-        sender_interface.poll(Instant::from_millis(1), &mut sender_device, &mut sender_sockets);
-        assert!(sender_device
-            .transmit_to_gts(&adapter, &mut sender_stream, 7, 1)
-            .unwrap()
-            .is_some());
+        sender_interface.poll(
+            Instant::from_millis(1),
+            &mut sender_device,
+            &mut sender_sockets,
+        );
+        assert!(
+            sender_device
+                .transmit_to_gts(&adapter, &mut sender_stream, 7, 1)
+                .unwrap()
+                .is_some()
+        );
 
         sender_sockets
             .get_mut::<udp::Socket>(sender_handle)
             .send_slice(b"delivered", remote)
             .unwrap();
-        sender_interface.poll(Instant::from_millis(2), &mut sender_device, &mut sender_sockets);
+        sender_interface.poll(
+            Instant::from_millis(2),
+            &mut sender_device,
+            &mut sender_sockets,
+        );
         assert!(deliver_next(
             &mut sender_device,
             &adapter,
