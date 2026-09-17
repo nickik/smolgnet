@@ -20,7 +20,7 @@ pub use device::GtsIpDevice;
 const GTS_DATAGRAM_OVERHEAD: usize = 12;
 
 /// GTS profile required by the IP compatibility overlay.
-pub const fn overlay_profile(max_size_class: SizeClass) -> StreamProfile {
+pub fn overlay_profile(max_size_class: SizeClass) -> StreamProfile {
     StreamProfile::unreliable_variable(max_size_class, Direction::Bidirectional, false, false)
 }
 
