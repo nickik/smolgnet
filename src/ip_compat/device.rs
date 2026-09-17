@@ -145,6 +145,54 @@ mod tests {
     use crate::ip_compat::overlay_profile;
     use crate::wire::gdp::SizeClass;
     use crate::wire::gts::GtsPacket;
+    use smoltcp::iface::{Config as SmolConfig, Interface as SmolInterface, SocketSet};
+    use smoltcp::socket::udp;
+    use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+
+    fn interface(device: &mut GtsIpDevice, address: [u8; 4]) -> SmolInterface {
+        let mut interface = SmolInterface::new(
+            SmolConfig::new(HardwareAddress::Ip),
+            device,
+            Instant::ZERO,
+        );
+        interface.update_ip_addrs(|addresses| {
+            addresses
+                .push(IpCidr::new(IpAddress::v4(address[0], address[1], address[2], address[3]), 24))
+                .unwrap();
+        });
+        interface
+    }
+
+    fn udp_socket() -> udp::Socket<'static> {
+        udp::Socket::new(
+            udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]),
+            udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]),
+        )
+    }
+
+    fn deliver_next(
+        sender: &mut GtsIpDevice,
+        adapter: &IpCompatDatagram,
+        tx_stream: &mut GtsStream,
+        receiver: &mut GtsIpDevice,
+        rx_stream: &mut GtsStream,
+        now: u64,
+    ) -> bool {
+        let Some(frame) = sender
+            .transmit_to_gts(adapter, tx_stream, 7, now)
+            .unwrap()
+        else {
+            return false;
+        };
+        rx_stream
+            .validate_incoming(SizeClass::Legacy1500, &frame)
+            .unwrap();
+        rx_stream.receive_packet(&frame).unwrap();
+        receiver
+            .receive_from_gts(adapter, rx_stream.recv().unwrap())
+            .unwrap();
+        true
+    }
 
     #[test]
     fn smoltcp_device_egress_becomes_one_unreliable_gts_datagram() {
@@ -164,5 +212,67 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(matches!(frame, GtsPacket::Datagram { sequence: None, .. }));
+    }
+
+    #[test]
+    fn smoltcp_udp_delivers_after_an_earlier_gts_datagram_is_dropped() {
+        let profile = overlay_profile(SizeClass::Legacy1500);
+        let adapter = IpCompatDatagram::new(profile).unwrap();
+        let mut sender_device = GtsIpDevice::new(adapter);
+        let mut receiver_device = GtsIpDevice::new(adapter);
+        let mut sender_interface = interface(&mut sender_device, [10, 0, 0, 1]);
+        let mut receiver_interface = interface(&mut receiver_device, [10, 0, 0, 2]);
+        let mut sender_stream = GtsStream::new(0, profile, true, 0, 0).unwrap();
+        let mut receiver_stream = GtsStream::new(0, profile, false, 0, 0).unwrap();
+
+        let mut sender_sockets = SocketSet::new(vec![]);
+        let sender_handle = sender_sockets.add(udp_socket());
+        sender_sockets
+            .get_mut::<udp::Socket>(sender_handle)
+            .bind(10001)
+            .unwrap();
+        let mut receiver_sockets = SocketSet::new(vec![]);
+        let receiver_handle = receiver_sockets.add(udp_socket());
+        receiver_sockets
+            .get_mut::<udp::Socket>(receiver_handle)
+            .bind(10002)
+            .unwrap();
+
+        let remote = (IpAddress::v4(10, 0, 0, 2), 10002);
+        sender_sockets
+            .get_mut::<udp::Socket>(sender_handle)
+            .send_slice(b"dropped", remote)
+            .unwrap();
+        sender_interface.poll(Instant::from_millis(1), &mut sender_device, &mut sender_sockets);
+        assert!(sender_device
+            .transmit_to_gts(&adapter, &mut sender_stream, 7, 1)
+            .unwrap()
+            .is_some());
+
+        sender_sockets
+            .get_mut::<udp::Socket>(sender_handle)
+            .send_slice(b"delivered", remote)
+            .unwrap();
+        sender_interface.poll(Instant::from_millis(2), &mut sender_device, &mut sender_sockets);
+        assert!(deliver_next(
+            &mut sender_device,
+            &adapter,
+            &mut sender_stream,
+            &mut receiver_device,
+            &mut receiver_stream,
+            2,
+        ));
+        receiver_interface.poll(
+            Instant::from_millis(2),
+            &mut receiver_device,
+            &mut receiver_sockets,
+        );
+
+        let socket = receiver_sockets.get_mut::<udp::Socket>(receiver_handle);
+        assert!(socket.can_recv());
+        let (payload, metadata) = socket.recv().unwrap();
+        assert_eq!(payload, b"delivered");
+        assert_eq!(metadata.endpoint.port, 10001);
+        assert!(!socket.can_recv());
     }
 }
