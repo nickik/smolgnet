@@ -97,11 +97,10 @@ impl Device for GtsIpDevice {
     }
 
     fn capabilities(&self) -> DeviceCapabilities {
-        DeviceCapabilities {
-            max_transmission_unit: self.mtu,
-            medium: Medium::Ip,
-            ..DeviceCapabilities::default()
-        }
+        let mut capabilities = DeviceCapabilities::default();
+        capabilities.max_transmission_unit = self.mtu;
+        capabilities.medium = Medium::Ip;
+        capabilities
     }
 }
 
