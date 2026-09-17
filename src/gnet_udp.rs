@@ -159,7 +159,10 @@ mod tests {
     use crate::time::Instant;
     use crate::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address};
     use smolgnet_native::wire::gts::GtsContext;
-    use smolgnet_native::{Direction, GdpAddress, GtsPacket, GtsStream, SizeClass, StreamProfile};
+    use smolgnet_native::{
+        Direction, GdpAddress, GdpHeader, GdpPacket, GdpType, GdpWireConfig, GtsPacket, GtsStream,
+        SizeClass, StreamProfile,
+    };
 
     fn udp_loopback() -> (
         Interface,
@@ -229,6 +232,22 @@ mod tests {
             source: GdpAddress(0x100),
             destination: GdpAddress(0x200),
         }
+    }
+
+    fn encode_gdp_gts(payload: Vec<u8>, size_class: SizeClass) -> Vec<u8> {
+        GdpPacket::new(
+            GdpHeader::global(
+                GdpType::Gts,
+                size_class,
+                15,
+                GdpAddress(0x100),
+                GdpAddress(0x200),
+            ),
+            payload,
+        )
+        .unwrap()
+        .encode(GdpWireConfig::default())
+        .unwrap()
     }
 
     #[test]
@@ -308,7 +327,8 @@ mod tests {
         for outgoing in [second, first] {
             let size_class = outgoing.choose_size_class(Some(profile)).unwrap();
             let context = gts_context(size_class);
-            let encoded = outgoing.encode(context, Some(profile)).unwrap();
+            let encoded =
+                encode_gdp_gts(outgoing.encode(context, Some(profile)).unwrap(), size_class);
             let received = forward_over_udp(
                 &mut iface,
                 &mut device,
@@ -322,7 +342,10 @@ mod tests {
                 },
                 4_001,
             );
-            let incoming = GtsPacket::decode(&received, context, Some(profile)).unwrap();
+            let incoming_gdp = GdpPacket::decode(&received, GdpWireConfig::default(), 0).unwrap();
+            assert_eq!(incoming_gdp.header.packet_type, GdpType::Gts);
+            let incoming =
+                GtsPacket::decode(&incoming_gdp.payload, context, Some(profile)).unwrap();
             native_receiver
                 .validate_incoming(size_class, &incoming)
                 .unwrap();
@@ -332,7 +355,7 @@ mod tests {
         let ack = ack.expect("in-order delivery creates a GTS acknowledgement");
         let ack_size_class = ack.choose_size_class(None).unwrap();
         let ack_context = gts_context(ack_size_class);
-        let encoded_ack = ack.encode(ack_context, None).unwrap();
+        let encoded_ack = encode_gdp_gts(ack.encode(ack_context, None).unwrap(), ack_size_class);
         let received_ack = forward_over_udp(
             &mut iface,
             &mut device,
@@ -346,7 +369,9 @@ mod tests {
             },
             4_000,
         );
-        let decoded_ack = GtsPacket::decode(&received_ack, ack_context, None).unwrap();
+        let ack_gdp = GdpPacket::decode(&received_ack, GdpWireConfig::default(), 0).unwrap();
+        assert_eq!(ack_gdp.header.packet_type, GdpType::Gts);
+        let decoded_ack = GtsPacket::decode(&ack_gdp.payload, ack_context, None).unwrap();
         match decoded_ack {
             GtsPacket::Ack {
                 ack_base,
