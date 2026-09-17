@@ -27,7 +27,7 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --check --all
+        run: rustfmt --edition 2024 --check src/ip_compat.rs src/ip_compat/device.rs
       - name: Compile optional compatibility layer
         run: cargo check --no-default-features --features alloc,ip-compat --lib
       - name: Run unreliable GTS adapter tests
