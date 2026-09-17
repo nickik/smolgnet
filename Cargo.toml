@@ -38,6 +38,10 @@ rstest = "0.17"
 insta = "1.41.1"
 rand_chacha = "0.3.1"
 idna = { version = "=1.0.1" }
+# The native GNet implementation under test. Pinning keeps the UDP underlay
+# interoperability test independent of whichever branch happens to be checked
+# out beside this repository.
+smolgnet-native = { package = "smolgnet", git = "https://github.com/nickik/smolgnet.git", rev = "33c95a23c8dd588fac4f766ee37680f7e02f5366", default-features = false, features = ["alloc"] }
 
 [features]
 std = ["managed/std", "alloc"]
