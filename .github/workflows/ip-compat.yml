@@ -1,0 +1,34 @@
+name: IP compatibility over GTS
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'src/ip_compat.rs'
+      - 'src/ip_compat/**'
+      - '.github/workflows/ip-compat.yml'
+  push:
+    branches:
+      - gnet-tcp-udp-transport
+    paths:
+      - 'Cargo.toml'
+      - 'src/lib.rs'
+      - 'src/ip_compat.rs'
+      - 'src/ip_compat/**'
+      - '.github/workflows/ip-compat.yml'
+
+jobs:
+  ip-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: rustfmt --check src/lib.rs src/ip_compat.rs src/ip_compat/device.rs
+      - name: Compile optional compatibility layer
+        run: cargo check --no-default-features --features alloc,ip-compat --lib
+      - name: Run unreliable GTS adapter tests
+        run: cargo test --features ip-compat --lib ip_compat -- --nocapture
